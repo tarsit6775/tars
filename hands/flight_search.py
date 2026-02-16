@@ -30,6 +30,7 @@
 """
 
 import json
+import logging
 import math
 import os
 import re
@@ -41,6 +42,8 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from hands.cdp import CDP
+
+logger = logging.getLogger("TARS")
 
 
 # ═══════════════════════════════════════════════════════

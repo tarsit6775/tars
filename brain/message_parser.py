@@ -32,6 +32,7 @@ class ParsedMessage:
     text: str
     timestamp: float
     stream_intent: str = "new"  # correction, addition, acknowledgment, new
+    source: str = "imessage"    # imessage or dashboard
 
 
 @dataclass
@@ -49,6 +50,7 @@ class MessageBatch:
     batch_type: str          # single, correction, addition, multi_task
     individual_tasks: List[str] = field(default_factory=list)
     timestamp: float = 0.0
+    source: str = "imessage"    # imessage or dashboard — routes replies
 
     @property
     def is_single(self) -> bool:
@@ -143,7 +145,7 @@ class MessageStreamParser:
         self._timer: Optional[threading.Timer] = None
         self._on_batch_ready = on_batch_ready
 
-    def ingest(self, text: str):
+    def ingest(self, text: str, source: str = "imessage"):
         """
         Ingest a new message into the stream.
         
@@ -162,6 +164,7 @@ class MessageStreamParser:
             text=text,
             timestamp=time.time(),
             stream_intent=stream_intent,
+            source=source,
         )
 
         with self._lock:
@@ -223,12 +226,16 @@ class MessageStreamParser:
         Single message → pass through.
         Multiple messages → analyze relationships and merge.
         """
+        # Source is "dashboard" if ANY message in the batch came from dashboard
+        batch_source = "dashboard" if any(m.source == "dashboard" for m in messages) else "imessage"
+
         if len(messages) == 1:
             return MessageBatch(
                 messages=messages,
                 merged_text=messages[0].text,
                 batch_type="single",
                 timestamp=messages[0].timestamp,
+                source=batch_source,
             )
 
         # Multiple messages — figure out the relationship
@@ -255,6 +262,7 @@ class MessageStreamParser:
                 merged_text=". ".join(parts),
                 batch_type="correction",
                 timestamp=messages[-1].timestamp,
+                source=batch_source,
             )
 
         if has_addition:
@@ -265,6 +273,7 @@ class MessageStreamParser:
                 merged_text=". ".join(parts),
                 batch_type="addition",
                 timestamp=messages[-1].timestamp,
+                source=batch_source,
             )
 
         # Multiple unrelated messages — could be multi-task or stream of thought
@@ -276,6 +285,7 @@ class MessageStreamParser:
                 merged_text=" ".join(m.text for m in messages),
                 batch_type="addition",
                 timestamp=messages[-1].timestamp,
+                source=batch_source,
             )
 
         # Longer, distinct messages → multi-task
@@ -286,6 +296,7 @@ class MessageStreamParser:
             batch_type="multi_task",
             individual_tasks=parts,
             timestamp=messages[-1].timestamp,
+            source=batch_source,
         )
 
     def _apply_correction(self, previous_parts: List[str], correction: str) -> str:

@@ -74,6 +74,9 @@ class ToolExecutor:
         self.monitor = agent_monitor
         self._kill_event = kill_event  # Shared threading.Event — set when kill word received
 
+        # ── Reply routing — thread-local so each task thread knows its source ──
+        self._reply_source = threading.local()
+
         # ── Deployment tracker — resets per task ──
         # Every deployment and its result, so brain sees full history
         self._deployment_log = []  # [{agent, task, success, steps, reason}]
@@ -115,6 +118,31 @@ class ToolExecutor:
             llm_client=self.llm_client,
             model=self.fast_model,
         )
+
+    # ── Reply routing ────────────────────────────────────
+    def set_reply_source(self, source: str):
+        """Set the reply source for the current thread (called from tars._run_task)."""
+        self._reply_source.source = source
+
+    def get_reply_source(self) -> str:
+        """Get the reply source for the current thread."""
+        return getattr(self._reply_source, "source", "imessage")
+
+    def send_reply(self, message: str):
+        """Send a reply routed to the correct channel (iMessage or dashboard).
+
+        When the task came from the dashboard, the reply is emitted as a
+        WebSocket event so the dashboard can display it.  iMessage is also
+        sent as a fallback for now, so the user gets the message either way.
+        """
+        source = self.get_reply_source()
+        if source == "dashboard":
+            event_bus.emit("imessage_sent", {"message": message, "source": "dashboard"})
+            logger.info(f"  📤 Reply sent to dashboard")
+            return {"success": True, "content": f"Reply sent to dashboard"}
+        else:
+            event_bus.emit("imessage_sent", {"message": message})
+            return self.sender.send(message)
 
     def reset_task_tracker(self):
         """Call this when a new user task starts (from tars.py)."""
@@ -175,7 +203,7 @@ class ToolExecutor:
         # ─── Direct Tools ────────────────────────
         elif tool_name == "send_imessage":
             event_bus.emit("imessage_sent", {"message": inp["message"]})
-            return self.sender.send(inp["message"])
+            return self.send_reply(inp["message"])
 
         elif tool_name == "wait_for_reply":
             result = self.reader.wait_for_reply(timeout=inp.get("timeout", 300))

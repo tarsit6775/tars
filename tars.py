@@ -469,6 +469,10 @@ class TARS:
             event_bus.emit("task_received", {"task": task_text, "source": "agent", "task_id": task_id})
             event_bus.emit("status_change", {"status": "working", "label": f"WORKING ({self._count_active_tasks()})" })
 
+            # Set reply routing — dashboard messages get dashboard replies
+            task_source = batch.source if batch else "imessage"
+            self.executor.set_reply_source(task_source)
+
             # Reset deployment tracker (fresh agent budget)
             self.executor.reset_task_tracker()
 
@@ -491,13 +495,13 @@ class TARS:
             # Log the result
             self.logger.info(f"[{task_id}] Cycle complete. Response: {response[:200]}")
 
-            # Send the brain's final response to the user via iMessage
+            # Send the brain's final response to the user
             # BUT only if the brain didn't already send messages during its tool loop
             if response and not response.startswith("🛑") and not self.brain._brain_sent_imessage:
                 try:
-                    self.imessage_sender.send(response[:1500])
+                    self.executor.send_reply(response[:1500])
                 except Exception as e:
-                    self.logger.warning(f"[{task_id}] Failed to send response via iMessage: {e}")
+                    self.logger.warning(f"[{task_id}] Failed to send response: {e}")
 
             # Safety net: if brain returned an error, notify user
             if response and (response.startswith("❌") or response.startswith("⚠️")):
@@ -523,7 +527,7 @@ class TARS:
             self.logger.error(f"[{task_id}] Task error: {e}")
             logger.warning(f"  ⚠️ [{task_id}] Task error: {e}")
             try:
-                self.imessage_sender.send(f"⚠️ Something went wrong with a task. Error: {str(e)[:200]}. Send your request again.")
+                self.executor.send_reply(f"⚠️ Something went wrong with a task. Error: {str(e)[:200]}. Send your request again.")
             except Exception:
                 pass
 

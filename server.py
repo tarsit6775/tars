@@ -221,7 +221,7 @@ class TARSServer:
 
                     # Also feed through the message parser (for new tasks)
                     # The parser's 3s merge window handles back-to-back messages
-                    self.tars.message_parser.ingest(message)
+                    self.tars.message_parser.ingest(message, source="dashboard")
 
             elif msg_type == "get_agents":
                 agent_data = agent_monitor.get_dashboard_data()

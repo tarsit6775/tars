@@ -255,9 +255,33 @@ class MetaCognitionMonitor:
         # Also check for same tool name (even with different args)
         name_counts = Counter(r.name for r in recent)
         for name, count in name_counts.most_common(1):
-            # More lenient for think/scan (those are expected to repeat)
-            threshold = 6 if name in ("think", "scan_environment") else self.LOOP_THRESHOLD + 1
-            if count >= threshold and name not in ("think",):
+            # More lenient for tools that legitimately run in parallel with diverse args
+            if name in ("think",):
+                continue  # think is never a loop
+            elif name in ("web_search", "quick_read_file", "recall_memory"):
+                # These tools are often called in parallel with DIFFERENT queries —
+                # only flag if args are also similar (already caught above).
+                # Name-only threshold is very high to avoid false positives.
+                threshold = 8
+            elif name in ("scan_environment",):
+                threshold = 6
+            elif name == "send_imessage":
+                # iMessage loops are critical — catch them faster
+                threshold = 4
+            elif name.startswith("deploy_"):
+                # Agent deployments for different sub-tasks are normal —
+                # a 5-task batch legitimately deploys 4-5 agents.
+                # Only flag at high counts.
+                threshold = 6
+            elif name in ("run_quick_command",):
+                # Parallel execution of different commands is normal for multi-task batches
+                threshold = 6
+            elif name == "verify_result":
+                # Verifying multiple files/results is normal after parallel work
+                threshold = 6
+            else:
+                threshold = self.LOOP_THRESHOLD + 1  # default: 4
+            if count >= threshold:
                 return (name, count)
 
         return None

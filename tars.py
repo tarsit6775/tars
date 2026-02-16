@@ -23,6 +23,7 @@ import os
 import sys
 import yaml
 import time
+import logging
 import queue
 import signal
 import threading
@@ -36,16 +37,20 @@ sys.path.insert(0, BASE_DIR)
 from brain.planner import TARSBrain
 from brain.message_parser import MessageStreamParser, MessageBatch
 from brain.self_heal import SelfHealEngine
+from brain.daily_improve import DailyImprover
 from executor import ToolExecutor
 from voice.imessage_send import IMessageSender
 from voice.imessage_read import IMessageReader
 from memory.memory_manager import MemoryManager
 from memory.agent_memory import AgentMemory
+from memory.error_tracker import error_tracker
 from utils.logger import setup_logger
 from utils.event_bus import event_bus
 from utils.agent_monitor import agent_monitor
 from server import TARSServer
 from hands import mac_control as mac
+
+logger = logging.getLogger("TARS")
 
 
 # ─── Banner ──────────────────────────────────────────
@@ -92,7 +97,7 @@ class TARS:
 
         # Load config
         self.config = load_config()
-        print("  ⚙️  Config loaded")
+        logger.info("  ⚙️  Config loaded")
 
         # Validate API keys — both brain and agent
         provider_urls = {
@@ -109,13 +114,13 @@ class TARS:
         brain_key = brain_cfg.get("api_key", "")
         brain_provider = brain_cfg.get("provider", "")
         if brain_key and not brain_key.startswith("YOUR_"):
-            print(f"  🧠 Brain LLM: {brain_provider}/{brain_cfg.get('model', '?')}")
+            logger.info(f"  🧠 Brain LLM: {brain_provider}/{brain_cfg.get('model', '?')}")
         elif brain_provider:
             url = provider_urls.get(brain_provider, "your provider's dashboard")
-            print(f"\n  ❌ ERROR: Brain API key missing or invalid")
-            print(f"  → Set brain_llm.api_key in config.yaml")
-            print(f"  → Or: export TARS_BRAIN_API_KEY=your_key")
-            print(f"  → Get a key at: {url}\n")
+            logger.error(f"\n  ❌ ERROR: Brain API key missing or invalid")
+            logger.error(f"  → Set brain_llm.api_key in config.yaml")
+            logger.error(f"  → Or: export TARS_BRAIN_API_KEY=your_key")
+            logger.error(f"  → Get a key at: {url}\n")
             sys.exit(1)
 
         # Validate agent LLM key  
@@ -124,26 +129,26 @@ class TARS:
         provider = llm_cfg["provider"]
         if not api_key or api_key.startswith("YOUR_"):
             url = provider_urls.get(provider, "your provider's dashboard")
-            print(f"\n  ❌ ERROR: Set your {provider} API key in config.yaml")
-            print(f"  → Open config.yaml and set llm.api_key")
-            print(f"  → Or: export TARS_AGENT_API_KEY=your_key")
-            print(f"  → Get a key at: {url}\n")
+            logger.error(f"\n  ❌ ERROR: Set your {provider} API key in config.yaml")
+            logger.error(f"  → Open config.yaml and set llm.api_key")
+            logger.error(f"  → Or: export TARS_AGENT_API_KEY=your_key")
+            logger.error(f"  → Get a key at: {url}\n")
             sys.exit(1)
-        print(f"  🤖 Agent LLM: {provider}")
+        logger.info(f"  🤖 Agent LLM: {provider}")
 
         # Initialize components
         self.logger = setup_logger(self.config, BASE_DIR)
-        print("  📝 Logger ready")
+        logger.info("  📝 Logger ready")
 
         self.memory = MemoryManager(self.config, BASE_DIR)
-        print("  🧠 Memory loaded")
+        logger.info("  🧠 Memory loaded")
 
         self.agent_memory = AgentMemory(BASE_DIR)
-        print("  🧬 Agent memory loaded")
+        logger.info("  🧬 Agent memory loaded")
 
         self.imessage_sender = IMessageSender(self.config)
         self.imessage_reader = IMessageReader(self.config)
-        print("  📱 iMessage bridge ready")
+        logger.info("  📱 iMessage bridge ready")
 
         # Must init before executor/brain so they can reference these
         self.running = True
@@ -156,41 +161,58 @@ class TARS:
             self.config, self.imessage_sender, self.imessage_reader, self.memory, self.logger,
             kill_event=self._kill_event,
         )
-        print("  🔧 Orchestrator executor ready")
-        print(f"     ├─ 🌐 Browser Agent")
-        print(f"     ├─ 💻 Coder Agent")
-        print(f"     ├─ ⚙️  System Agent")
-        print(f"     ├─ 🔍 Research Agent")
-        print(f"     └─ 📁 File Agent")
+        logger.info("  🔧 Orchestrator executor ready")
+        logger.info(f"     ├─ 🌐 Browser Agent")
+        logger.info(f"     ├─ 💻 Coder Agent")
+        logger.info(f"     ├─ ⚙️  System Agent")
+        logger.info(f"     ├─ 🔍 Research Agent")
+        logger.info(f"     └─ 📁 File Agent")
 
         self.brain = TARSBrain(self.config, self.executor, self.memory)
-        print("  🤖 Orchestrator brain online")
+        logger.info("  🤖 Orchestrator brain online")
 
         # Self-Healing Engine — monitors failures, proposes code fixes
         self.self_heal = SelfHealEngine()
-        print("  🩹 Self-healing engine ready")
+        logger.info("  🩹 Self-healing engine ready")
+
+        # Daily Self-Improvement — scheduled nightly improvement cycle
+        self.daily_improver = DailyImprover(
+            config=self.config,
+            self_heal_engine=self.self_heal,
+            self_improve_engine=self.executor.self_improve,
+            imessage_sender=self.imessage_sender,
+            imessage_reader=self.imessage_reader,
+            executor=self.executor,
+        )
+        self.daily_improver.start()
+        logger.info("  📅 Daily self-improvement scheduler active")
+
+        # Error Tracker — persistent error log with fix registry
+        tracker_stats = error_tracker.get_stats()
+        logger.info(f"  📋 Error tracker: {tracker_stats['unique_errors']} patterns, "
+              f"{tracker_stats['auto_fixable']} auto-fixable")
 
         # Parallel task processing config
         self._max_parallel_tasks = self.config.get("agent", {}).get("max_parallel_tasks", 3)
         self._active_tasks = {}  # {task_id: threading.Thread}
         self._active_tasks_lock = threading.Lock()
         self._task_counter = 0
-        print(f"  ⚡ Parallel task pool (max {self._max_parallel_tasks} concurrent)")
+        logger.info(f"  ⚡ Parallel task pool (max {self._max_parallel_tasks} concurrent)")
 
         # Phase 1: Message Stream Parser
         # Accumulates back-to-back messages (3s window) and merges intelligently
         self.message_parser = MessageStreamParser(
             on_batch_ready=self._on_batch_ready
         )
-        print("  📨 Message stream parser ready (3s merge window)")
+        logger.info("  📨 Message stream parser ready (3s merge window)")
 
         self.monitor = agent_monitor
-        print("  📊 Agent monitor active")
+        logger.info("  📊 Agent monitor active")
 
         # Start dashboard server
         self.server = TARSServer(memory_manager=self.memory, tars_instance=self)
         self.server.start()
-        print("  🖥️  Dashboard live at \033[36mhttp://localhost:8420\033[0m")
+        logger.info("  🖥️  Dashboard live at \033[36mhttp://localhost:8420\033[0m")
 
         # Handle Ctrl+C gracefully
         signal.signal(signal.SIGINT, self._shutdown)
@@ -198,11 +220,15 @@ class TARS:
 
     def _shutdown(self, *args):
         """Graceful shutdown — stops agents, drains queue, then exits."""
-        print("\n\n  🛑 TARS shutting down...")
+        logger.info("\n\n  🛑 TARS shutting down...")
 
         # Flush any pending messages in the stream parser
         if hasattr(self, 'message_parser'):
             self.message_parser.force_flush()
+
+        # Stop daily improver
+        if hasattr(self, 'daily_improver'):
+            self.daily_improver.stop()
 
         # Signal all running agents to stop
         self._kill_event.set()
@@ -218,7 +244,7 @@ class TARS:
         if hasattr(self.executor, 'self_improve'):
             summary = self.executor.self_improve.get_session_summary()
             if summary:
-                print(f"\n{summary}\n")
+                logger.info(f"\n{summary}\n")
 
         self.memory.update_context(
             f"# TARS — Last Session\n\nShutdown at {datetime.now().isoformat()}\n"
@@ -227,57 +253,57 @@ class TARS:
 
     def run(self, initial_task=None):
         """Main agent loop."""
-        print(f"\n  {'─' * 50}")
-        print(f"  🟢 TARS is online — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"  {'─' * 50}\n")
+        logger.info(f"\n  {'─' * 50}")
+        logger.info(f"  🟢 TARS is online — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"  {'─' * 50}\n")
 
         event_bus.emit("status_change", {"status": "online", "label": "ONLINE"})
 
         # ── Environment snapshot on startup ──
-        print("  🌍 Taking environment snapshot...")
+        logger.info("  🌍 Taking environment snapshot...")
         try:
             snapshot = mac.get_environment_snapshot()
             if snapshot.get("success"):
                 self._last_snapshot = snapshot.get("snapshot", {})
                 self.memory.save("context", "startup_environment", snapshot.get("content", ""))
                 apps = snapshot.get("snapshot", {}).get("running_apps", [])
-                print(f"  ✅ Snapshot: {len(apps)} apps running, volume {snapshot.get('snapshot', {}).get('volume', '?')}%")
+                logger.info(f"  ✅ Snapshot: {len(apps)} apps running, volume {snapshot.get('snapshot', {}).get('volume', '?')}%")
             else:
                 self._last_snapshot = {}
-                print("  ⚠️ Snapshot partial — continuing")
+                logger.warning("  ⚠️ Snapshot partial — continuing")
         except Exception as e:
             self._last_snapshot = {}
-            print(f"  ⚠️ Snapshot skipped: {e}")
+            logger.warning(f"  ⚠️ Snapshot skipped: {e}")
 
         # Start flight price tracker scheduler (background)
         try:
             from hands.flight_search import start_price_tracker_scheduler
             start_price_tracker_scheduler(check_interval_minutes=30)
-            print("  ✈️  Flight price tracker scheduler started (every 30min)")
+            logger.info("  ✈️  Flight price tracker scheduler started (every 30min)")
         except Exception as e:
-            print(f"  ⚠️  Price tracker scheduler skipped: {e}")
+            logger.warning(f"  ⚠️  Price tracker scheduler skipped: {e}")
 
         # Start task worker thread (processes queue serially)
         worker = threading.Thread(target=self._task_worker, daemon=True)
         worker.start()
 
         # Dashboard URL (don't auto-open — it interferes with Chrome browser tools)
-        print(f"  🌐 Open dashboard: http://localhost:8420\n")
+        logger.info(f"  🌐 Open dashboard: http://localhost:8420\n")
 
         # Notify owner that TARS is online and ready
         try:
             self.imessage_sender.send("✅ TARS is online and all systems are functional. Ready for commands.")
-            print("  📱 Startup notification sent via iMessage")
+            logger.info("  📱 Startup notification sent via iMessage")
         except Exception as e:
-            print(f"  ⚠️ Could not send startup iMessage: {e}")
+            logger.warning(f"  ⚠️ Could not send startup iMessage: {e}")
 
         if initial_task:
             # Start with a task from command line
-            print(f"  📋 Initial task: {initial_task}\n")
+            logger.info(f"  📋 Initial task: {initial_task}\n")
             self._process_task(initial_task)
         else:
             # No task — wait for messages (conversation-ready)
-            print("  📱 Listening for messages...\n")
+            logger.info("  📱 Listening for messages...\n")
 
         # Main loop — keep working forever
         # Messages are fed through the stream parser which:
@@ -293,7 +319,7 @@ class TARS:
                 conv_ctx = len(self.brain.conversation_history)
                 active = self.brain.threads.active_thread
                 thread_info = f", thread: {active.topic[:30]}" if active else ""
-                print(f"  ⏳ Waiting for message... (msgs: {conv_msgs}, ctx: {conv_ctx}{thread_info})")
+                logger.debug(f"  ⏳ Waiting for message... (msgs: {conv_msgs}, ctx: {conv_ctx}{thread_info})")
                 reply = self.imessage_reader.wait_for_reply(timeout=3600)  # 1 hour timeout
 
                 if reply.get("success"):
@@ -302,7 +328,7 @@ class TARS:
 
                     # Check kill switch — stops all running agents
                     if any(kw.lower() in task.lower() for kw in self.kill_words):
-                        print(f"  🛑 Kill command received: {task}")
+                        logger.info(f"  🛑 Kill command received: {task}")
                         self._kill_event.set()
                         event_bus.emit("kill_switch", {"source": "imessage"})
                         try:
@@ -319,13 +345,13 @@ class TARS:
                     self.message_parser.ingest(task)
                 else:
                     # Timed out — just keep waiting silently
-                    print("  💤 Still waiting...")
+                    logger.debug("  💤 Still waiting...")
 
             except KeyboardInterrupt:
                 self._shutdown()
             except Exception as e:
                 self.logger.error(f"Loop error: {e}")
-                print(f"  ⚠️ Error: {e} — continuing...")
+                logger.warning(f"  ⚠️ Error: {e} — continuing...")
                 time.sleep(5)
 
     def _on_batch_ready(self, batch):
@@ -339,7 +365,7 @@ class TARS:
         """
         if batch.batch_type == "multi_task" and batch.individual_tasks:
             # Multiple independent tasks — queue each separately
-            print(f"  📨 Received {len(batch.individual_tasks)} separate tasks")
+            logger.info(f"  📨 Received {len(batch.individual_tasks)} separate tasks")
             for task_text in batch.individual_tasks:
                 single_batch = MessageBatch(
                     messages=batch.messages,
@@ -351,7 +377,7 @@ class TARS:
         else:
             # Single task or merged batch
             info = f"({batch.batch_type})" if batch.batch_type != "single" else ""
-            print(f"  📨 Batch ready {info}: {batch.merged_text[:100]}")
+            logger.info(f"  📨 Batch ready {info}: {batch.merged_text[:100]}")
             self._task_queue.put(batch)
 
     def _process_task(self, task):
@@ -406,7 +432,7 @@ class TARS:
                 t.start()
 
                 active = self._count_active_tasks()
-                print(f"  ⚡ Spawned {task_id} (active: {active}/{self._max_parallel_tasks})")
+                logger.info(f"  ⚡ Spawned {task_id} (active: {active}/{self._max_parallel_tasks})")
                 event_bus.emit("parallel_task_started", {
                     "task_id": task_id,
                     "task": task_text[:100],
@@ -434,10 +460,10 @@ class TARS:
         The brain handles thread routing internally.
         """
         try:
-            print(f"\n  {'═' * 50}")
+            logger.info(f"\n  {'═' * 50}")
             batch_info = f" [{batch.batch_type}]" if batch and batch.batch_type != "single" else ""
-            print(f"  📨 [{task_id}] Message{batch_info}: {task_text[:120]}")
-            print(f"  {'═' * 50}\n")
+            logger.info(f"  📨 [{task_id}] Message{batch_info}: {task_text[:120]}")
+            logger.info(f"  {'═' * 50}\n")
 
             self.logger.info(f"[{task_id}] New message: {task_text}")
             event_bus.emit("task_received", {"task": task_text, "source": "agent", "task_id": task_id})
@@ -466,7 +492,8 @@ class TARS:
             self.logger.info(f"[{task_id}] Cycle complete. Response: {response[:200]}")
 
             # Send the brain's final response to the user via iMessage
-            if response and not response.startswith("🛑"):
+            # BUT only if the brain didn't already send messages during its tool loop
+            if response and not response.startswith("🛑") and not self.brain._brain_sent_imessage:
                 try:
                     self.imessage_sender.send(response[:1500])
                 except Exception as e:
@@ -488,13 +515,13 @@ class TARS:
                 "active_count": self._count_active_tasks() - 1,
             })
 
-            print(f"\n  {'─' * 50}")
-            print(f"  ✅ [{task_id}] Cycle complete")
-            print(f"  {'─' * 50}\n")
+            logger.info(f"\n  {'─' * 50}")
+            logger.info(f"  ✅ [{task_id}] Cycle complete")
+            logger.info(f"  {'─' * 50}\n")
 
         except Exception as e:
             self.logger.error(f"[{task_id}] Task error: {e}")
-            print(f"  ⚠️ [{task_id}] Task error: {e}")
+            logger.warning(f"  ⚠️ [{task_id}] Task error: {e}")
             try:
                 self.imessage_sender.send(f"⚠️ Something went wrong with a task. Error: {str(e)[:200]}. Send your request again.")
             except Exception:
@@ -502,6 +529,12 @@ class TARS:
 
             # Record failure for self-healing
             self.self_heal.record_failure(
+                error=str(e),
+                context="task_processing",
+                details=task_text[:200],
+            )
+            # Record in error tracker for pattern learning
+            error_tracker.record_error(
                 error=str(e),
                 context="task_processing",
                 details=task_text[:200],
@@ -539,7 +572,7 @@ class TARS:
             details=task_text[:200],
         )
         if proposal:
-            print(f"  🩹 [{task_id}] Self-healing proposal: {proposal.trigger[:80]}")
+            logger.info(f"  🩹 [{task_id}] Self-healing proposal: {proposal.trigger[:80]}")
             # Ask Abdullah for permission
             approved = self.self_heal.request_healing(
                 self.imessage_sender,
@@ -547,10 +580,10 @@ class TARS:
                 proposal,
             )
             if approved:
-                print(f"  🩹 [{task_id}] Self-healing APPROVED — deploying dev agent")
+                logger.info(f"  🩹 [{task_id}] Self-healing APPROVED — deploying dev agent")
                 result = self.self_heal.execute_healing(approved, self.executor)
                 heal_status = "✅ healed" if result.get("success") else "❌ failed"
-                print(f"  🩹 [{task_id}] Self-healing {heal_status}")
+                logger.info(f"  🩹 [{task_id}] Self-healing {heal_status}")
                 try:
                     if result.get("success"):
                         self.imessage_sender.send("🩹 Self-healing complete! I've patched myself. The fix will take effect on next task.")
@@ -680,16 +713,16 @@ def _run_with_auto_restart():
                 tars.run()
             break  # Clean exit — don't restart
         except KeyboardInterrupt:
-            print("\n  🛑 TARS stopped by user.")
+            logger.info("\n  🛑 TARS stopped by user.")
             break
         except SystemExit:
             break
         except Exception as e:
             restart_count += 1
             import traceback
-            print(f"\n  💥 TARS CRASHED: {e}")
+            logger.error(f"\n  💥 TARS CRASHED: {e}")
             traceback.print_exc()
-            print(f"  🔄 Auto-restart {restart_count}/{max_restarts} in 5s...\n")
+            logger.error(f"  🔄 Auto-restart {restart_count}/{max_restarts} in 5s...\n")
 
             # Try to notify owner about the crash
             try:
@@ -705,7 +738,7 @@ def _run_with_auto_restart():
             time.sleep(5)
 
     if restart_count >= max_restarts:
-        print(f"\n  🛑 TARS hit max restarts ({max_restarts}). Stopping.")
+        logger.error(f"\n  🛑 TARS hit max restarts ({max_restarts}). Stopping.")
         try:
             from voice.imessage_send import IMessageSender
             import yaml

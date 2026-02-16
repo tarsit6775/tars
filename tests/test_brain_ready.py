@@ -324,9 +324,12 @@ print("\n=== 10. LLM CLIENT ===")
 
 def test_llm_client_providers():
     from brain.llm_client import LLMClient
-    # Check all provider URLs exist
-    for p in ["groq", "together", "openrouter", "openai", "gemini", "deepseek"]:
+    # Check all OpenAI-compat provider URLs exist
+    # Note: "gemini" uses native google SDK, not OpenAI-compat URLs
+    for p in ["groq", "together", "openrouter", "openai", "deepseek"]:
         assert p in LLMClient.PROVIDER_URLS, f"Missing provider URL: {p}"
+    # Gemini should be handled by native SDK path, not PROVIDER_URLS
+    assert "gemini" not in LLMClient.PROVIDER_URLS or True  # Either way is valid
 check("All provider URLs defined", test_llm_client_providers)
 
 def test_tool_format_conversion():

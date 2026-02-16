@@ -47,3 +47,12 @@ relay:
   url: ""                      # wss://your-app.railway.app/tunnel
   token: "change-me"           # Shared secret for tunnel auth
   passphrase: "change-me"     # Dashboard login passphrase
+
+# Daily Self-Improvement (runs at scheduled time)
+daily_improvement:
+  enabled: true
+  hour: 0                     # 0 = midnight (24h format)
+  minute: 0
+  auto_push: true             # Auto git push after improvements
+  git_remote: "origin"
+  git_branch: "main"

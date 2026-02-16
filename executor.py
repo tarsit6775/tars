@@ -20,10 +20,13 @@
 
 import os
 import json
+import logging
 import subprocess
 import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+
+logger = logging.getLogger("TARS")
 
 from brain.llm_client import LLMClient
 from brain.self_improve import SelfImproveEngine
@@ -42,6 +45,7 @@ from hands import mac_control as mac
 from hands.report_gen import generate_report as _gen_report
 from utils.event_bus import event_bus
 from utils.agent_monitor import agent_monitor
+from memory.error_tracker import error_tracker
 
 
 # Agent class registry
@@ -89,7 +93,7 @@ class ToolExecutor:
             )
             self.heavy_model = agent_cfg["model"]
             self.fast_model = agent_cfg["model"]
-            print(f"  🤖 Agents: {agent_cfg['provider']}/{self.heavy_model}")
+            logger.info(f"🤖 Agents: {agent_cfg['provider']}/{self.heavy_model}")
         else:
             # Fallback: single provider
             self.llm_client = LLMClient(
@@ -305,7 +309,7 @@ class ToolExecutor:
             if len(text) > 200:
                 return {"success": True, "content": f"Search results for '{query}':\n\n{text[:6000]}"}
         except Exception as e:
-            print(f"    ⚠️ HTTP search failed ({e}), trying browser...")
+            logger.warning(f"⚠️ HTTP search failed ({e}), trying browser...")
 
         # ── Slow fallback: CDP browser (with hard 30s timeout) ──
         import concurrent.futures
@@ -934,12 +938,31 @@ class ToolExecutor:
         if memory_context:
             context_parts.append(f"## Learned from past tasks\n{memory_context}")
 
+        # Inject home directory context for coder/file/system agents
+        # Prevents ~ usage in Python open() calls and write_file paths
+        if agent_type in ("coder", "file", "system"):
+            import os as _os
+            home = _os.path.expanduser("~")
+            context_parts.append(
+                f"## Environment\n"
+                f"- Home directory: {home}\n"
+                f"- Desktop: {home}/Desktop\n"
+                f"- Downloads: {home}/Downloads\n"
+                f"- IMPORTANT: Always use absolute paths starting with {home}/... — NEVER use ~ in file paths or Python open() calls."
+            )
+
         # Handoff from another agent
         handoff = self.comms.get_handoff_context(agent_type)
         if handoff:
             context_parts.append(handoff)
 
         context = "\n\n".join(context_parts) if context_parts else None
+
+        # ── Expand ~ in task string to absolute path (belt-and-suspenders) ──
+        import os as _os
+        home = _os.path.expanduser("~")
+        if "~/" in task:
+            task = task.replace("~/", f"{home}/")
 
         # ── Emit events ──
         attempt = deployment_count + 1
@@ -1043,6 +1066,19 @@ class ToolExecutor:
             "stuck": result.get("stuck", False),
         })
         self.monitor.on_completed(agent_type, result.get("success", False), result.get("steps", 0))
+
+        # ── Record in error tracker for pattern learning ──
+        if not result.get("success"):
+            stuck_reason = result.get("stuck_reason", result.get("content", "Unknown"))
+            fix_info = error_tracker.record_error(
+                error=stuck_reason[:500],
+                context=f"deploy_{agent_type}_agent",
+                tool=f"deploy_{agent_type}_agent",
+                agent=agent_type,
+                details=task[:200],
+            )
+            if fix_info and fix_info.get("has_fix"):
+                self.logger.info(f"🩹 Known fix for {agent_type}: {fix_info['fix'][:80]}")
 
         # ── If failed, enrich with structured recovery guidance ──
         if not result.get("success"):

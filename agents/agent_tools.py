@@ -61,11 +61,11 @@ TOOL_READ_FILE = {
 
 TOOL_WRITE_FILE = {
     "name": "write_file",
-    "description": "Write content to a file. Creates parent directories automatically. Overwrites if file exists.",
+    "description": "Write content to a file. Creates parent directories automatically. Overwrites if file exists.\n\nCRITICAL: Use ABSOLUTE paths starting with / (e.g. /Users/abdullah/Desktop/script.py). NEVER use ~ (tilde does NOT expand). Use the EXACT filename from the task.",
     "input_schema": {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "Absolute path to the file"},
+            "path": {"type": "string", "description": "ABSOLUTE path starting with / — e.g. /Users/abdullah/Desktop/script.py — NEVER use ~"},
             "content": {"type": "string", "description": "Full file content to write"}
         },
         "required": ["path", "content"]

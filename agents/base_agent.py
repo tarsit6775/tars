@@ -13,11 +13,47 @@
 """
 
 import json
+import logging
+import re
 import time
 import subprocess
 from abc import ABC, abstractmethod
 from utils.event_bus import event_bus
+
+logger = logging.getLogger("TARS")
 from utils.agent_monitor import agent_monitor
+
+
+# ─────────────────────────────────────────────
+#  Parse <function>name{...}</function> or <function(name>{...}</function> tags from text
+#  Groq Llama uses both formats depending on the run:
+#    Format A: <function>done{"summary": "..."}</function>
+#    Format B: <function(done>{"summary": "..."}</function>
+# ─────────────────────────────────────────────
+
+_FUNCTION_TAG_RE = re.compile(
+    r'<function[>(](\w+)>?\s*(\{.*?\})\s*</function>',
+    re.DOTALL,
+)
+
+
+def _parse_function_tags(text):
+    """
+    Parse <function>name{"key":"val"}</function> from agent text output.
+    
+    Groq Llama sometimes emits tool calls as text instead of proper tool_use.
+    Returns list of (name, args_dict) tuples, or empty list if none found.
+    """
+    results = []
+    for m in _FUNCTION_TAG_RE.finditer(text):
+        name = m.group(1)
+        args_raw = m.group(2)
+        try:
+            args = json.loads(args_raw)
+        except json.JSONDecodeError:
+            continue
+        results.append((name, args))
+    return results
 
 
 # ─────────────────────────────────────────────
@@ -138,7 +174,7 @@ class BaseAgent(ABC):
                 stuck   (bool)  — Whether the agent got stuck (for escalation)
                 stuck_reason (str) — Why it got stuck (if stuck=True)
         """
-        print(f"  {self.agent_emoji} {self.agent_name}: {task[:80]}...")
+        logger.info(f"  {self.agent_emoji} {self.agent_name}: {task[:80]}...")
         self._notify(f"{self.agent_emoji} {self.agent_name} starting: {task[:300]}")
 
         # Let subclass do setup
@@ -151,8 +187,13 @@ class BaseAgent(ABC):
 
         messages = [{"role": "user", "content": user_content}]
 
+        # Text-only loop detection
+        _last_text_hash = None
+        _text_repeat_count = 0
+        _TEXT_REPEAT_LIMIT = 3  # Force-stop after 3 identical text-only outputs
+
         for step in range(1, self.max_steps + 1):
-            print(f"  🧠 [{self.agent_name}] Step {step}/{self.max_steps}...")
+            logger.debug(f"  🧠 [{self.agent_name}] Step {step}/{self.max_steps}...")
             agent_key = self.agent_name.lower().split()[0]
             event_bus.emit("agent_step", {"agent": agent_key, "step": step})
             agent_monitor.on_step(agent_key, step)
@@ -160,7 +201,7 @@ class BaseAgent(ABC):
             # ── Kill switch check — abort immediately ──
             if self._kill_event and self._kill_event.is_set():
                 msg = f"{self.agent_name} killed by user at step {step}."
-                print(f"  \U0001f6d1 {msg}")
+                logger.warning(f"  \U0001f6d1 {msg}")
                 return {
                     "success": False,
                     "content": msg,
@@ -189,13 +230,13 @@ class BaseAgent(ABC):
                     if "tool_use_failed" in err_str or "rate_limit" in err_str.lower():
                         import time as _t
                         _t.sleep(1.0 * (_api_try + 1))
-                        print(f"    ⟳ Retrying LLM call ({_api_try + 2}/3)...")
+                        logger.warning(f"    ⟳ Retrying LLM call ({_api_try + 2}/3)...")
                         continue
                     break  # Non-transient error, stop retrying
 
             if response is None:
                 err = f"API error: {last_err}"
-                print(f"  ❌ {err}")
+                logger.warning(f"  ❌ {err}")
                 self._notify(f"❌ {self.agent_name} API error: {str(last_err)[:200]}")
                 return {
                     "success": False,
@@ -210,7 +251,7 @@ class BaseAgent(ABC):
 
             for block in assistant_content:
                 if block.type == "text" and block.text.strip():
-                    print(f"    💭 {block.text[:200]}")
+                    logger.debug(f"    💭 {block.text[:200]}")
 
                 elif block.type == "tool_use":
                     name = block.name
@@ -236,7 +277,7 @@ class BaseAgent(ABC):
 
                         if real_tool_steps < min_steps and is_vague:
                             # Reject — force agent to actually do work
-                            print(f"  ⚠️ [{self.agent_name}] Rejected premature done (only {real_tool_steps} real steps, vague summary)")
+                            logger.warning(f"  ⚠️ [{self.agent_name}] Rejected premature done (only {real_tool_steps} real steps, vague summary)")
                             tool_results.append({
                                 "type": "tool_result",
                                 "tool_use_id": tid,
@@ -251,7 +292,7 @@ class BaseAgent(ABC):
                             })
                             continue
 
-                        print(f"  ✅ [{self.agent_name}] Done: {summary[:200]}")
+                        logger.info(f"  ✅ [{self.agent_name}] Done: {summary[:200]}")
                         self._notify(f"✅ {self.agent_name} done: {summary[:500]}")
                         self._on_done(summary)
                         return {
@@ -265,7 +306,7 @@ class BaseAgent(ABC):
                     # ── Terminal tool: stuck ──
                     if name == "stuck":
                         reason = inp.get("reason", "Unknown reason.")
-                        print(f"  ❌ [{self.agent_name}] Stuck: {reason[:200]}")
+                        logger.warning(f"  ❌ [{self.agent_name}] Stuck: {reason[:200]}")
                         self._notify(f"⚠️ {self.agent_name} stuck: {reason[:500]}")
                         self._on_stuck(reason)
                         return {
@@ -278,10 +319,10 @@ class BaseAgent(ABC):
 
                     # ── Regular tool: dispatch ──
                     inp_short = json.dumps(inp)[:120]
-                    print(f"    🔧 {name}({inp_short})")
+                    logger.debug(f"    🔧 {name}({inp_short})")
                     result = self._dispatch(name, inp)
                     result_str = str(result)[:8000]
-                    print(f"      → {result_str[:200]}")
+                    logger.debug(f"      → {result_str[:200]}")
 
                     tool_results.append({
                         "type": "tool_result",
@@ -297,13 +338,100 @@ class BaseAgent(ABC):
                         short = result_str[:200] + ("..." if len(result_str) > 200 else "")
                         self._notify(f"{self.agent_emoji} Step {step}: {name}\n→ {short}")
 
-            # No tool calls — nudge the agent
+            # No tool calls — check for text-only loop or <function> tags
             if not tool_results:
                 if response.stop_reason == "end_turn":
                     texts = [b.text for b in assistant_content if b.type == "text"]
                     txt = " ".join(texts).strip()
                     if txt:
-                        print(f"  ⚠️ [{self.agent_name}] Text-only: {txt[:200]}")
+                        logger.warning(f"  ⚠️ [{self.agent_name}] Text-only: {txt[:200]}")
+
+                        # ── Parse <function>name{...}</function> tags from text ──
+                        parsed_calls = _parse_function_tags(txt)
+                        _rejected_premature = False
+                        if parsed_calls:
+                            for fn_name, fn_args in parsed_calls:
+                                # Handle done() from text
+                                if fn_name == "done":
+                                    summary = fn_args.get("summary", "Done.")
+
+                                    # Anti-hallucination: same check as proper tool_use done()
+                                    real_tool_steps = step - 1
+                                    vague_summaries = [
+                                        "done", "done.", "completed", "completed.",
+                                        "task completed", "task completed.",
+                                        "task is complete", "task is complete.",
+                                    ]
+                                    is_vague = (
+                                        summary.strip().lower() in vague_summaries
+                                        or len(summary.strip()) < 15
+                                    )
+                                    if real_tool_steps < 2 and is_vague:
+                                        logger.warning(f"  ⚠️ [{self.agent_name}] Rejected premature done from text (only {real_tool_steps} real steps)")
+                                        messages.append({"role": "assistant", "content": assistant_content})
+                                        messages.append({
+                                            "role": "user",
+                                            "content": (
+                                                f"REJECTED: You called done() without actually completing the task. "
+                                                f"You have only used {real_tool_steps} tool(s). Use your tools to "
+                                                f"actually perform the task first, then call done() with specifics."
+                                            ),
+                                        })
+                                        _rejected_premature = True
+                                        break  # break out of parsed_calls loop
+
+                                    logger.info(f"  ✅ [{self.agent_name}] Done (parsed from text): {summary[:200]}")
+                                    self._notify(f"✅ {self.agent_name} done: {summary[:500]}")
+                                    self._on_done(summary)
+                                    return {
+                                        "success": True,
+                                        "content": summary,
+                                        "steps": step,
+                                        "stuck": False,
+                                        "stuck_reason": None,
+                                    }
+                                # Handle stuck() from text
+                                if fn_name == "stuck":
+                                    reason = fn_args.get("reason", "Unknown reason.")
+                                    logger.warning(f"  ❌ [{self.agent_name}] Stuck (parsed from text): {reason[:200]}")
+                                    self._notify(f"⚠️ {self.agent_name} stuck: {reason[:500]}")
+                                    self._on_stuck(reason)
+                                    return {
+                                        "success": False,
+                                        "content": f"Stuck: {reason}",
+                                        "steps": step,
+                                        "stuck": True,
+                                        "stuck_reason": reason,
+                                    }
+
+                        # If premature done was rejected, continue to next step
+                        if _rejected_premature:
+                            continue
+
+                        # ── Text-only loop detection ──
+                        txt_hash = hash(txt[:500])
+                        if txt_hash == _last_text_hash:
+                            _text_repeat_count += 1
+                        else:
+                            _text_repeat_count = 1
+                            _last_text_hash = txt_hash
+
+                        if _text_repeat_count >= _TEXT_REPEAT_LIMIT:
+                            msg = (
+                                f"{self.agent_name} stuck in text-only loop "
+                                f"(same output {_text_repeat_count}x). Force-stopping."
+                            )
+                            logger.warning(f"  🔄 {msg}")
+                            self._notify(f"⚠️ {msg}")
+                            # Return best-effort: use the repeated text as content
+                            return {
+                                "success": True,
+                                "content": txt[:2000],
+                                "steps": step,
+                                "stuck": False,
+                                "stuck_reason": None,
+                            }
+
                     messages.append({"role": "assistant", "content": assistant_content})
                     messages.append({
                         "role": "user",
@@ -316,7 +444,7 @@ class BaseAgent(ABC):
 
         # Max steps exhausted
         msg = f"{self.agent_name} reached {self.max_steps} steps without finishing. Task may be partially complete."
-        print(f"  ⏱️ {msg}")
+        logger.warning(f"  ⏱️ {msg}")
         self._notify(f"⏱️ {msg}")
         return {
             "success": False,

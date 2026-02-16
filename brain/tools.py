@@ -108,7 +108,7 @@ TARS_TOOLS = [
     },
     {
         "name": "deploy_coder_agent",
-        "description": "Deploy Coder Agent for software development.\n\nCapabilities: Write code (any language), build projects, debug, run tests, git ops, install packages, deploy.\n\nGive COMPLETE task:\n✅ GOOD: 'Create a Python Flask API at ~/projects/api/app.py. It should have 3 endpoints: GET /health returns {\"status\": \"ok\"}, POST /users accepts {\"name\", \"email\"} and saves to users.json, GET /users returns all users. Use Flask, add requirements.txt with flask. Run it on port 5000 and verify it responds to curl localhost:5000/health.'\n❌ BAD: 'Build me an API'",
+        "description": "Deploy Coder Agent for software development.\n\nCapabilities: Write code (any language), build projects, debug, run tests, git ops, install packages, deploy.\n\nIMPORTANT: Always use ABSOLUTE paths in the task (e.g. /Users/abdullah/Desktop/script.py). Never use ~ (tilde). Use the EXACT filename requested.\n\nGive COMPLETE task:\n✅ GOOD: 'Create a Python script at /Users/abdullah/Desktop/fibonacci.py that prints the first 20 Fibonacci numbers. Run it with python3 to verify it works.'\n❌ BAD: 'Write me a Fibonacci script'\n❌ BAD: 'Create ~/Desktop/script.py' — NEVER use ~, use full /Users/abdullah/Desktop/script.py",
         "input_schema": {
             "type": "object",
             "properties": {

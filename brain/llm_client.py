@@ -28,6 +28,28 @@ except ImportError:
     _HAS_GEMINI = False
 
 # ─────────────────────────────────────────────
+#  Protobuf → Python conversion
+# ─────────────────────────────────────────────
+
+def _proto_to_python(obj):
+    """Recursively convert protobuf MapComposite/RepeatedComposite to plain Python.
+    
+    Gemini's fc.args returns protobuf wrappers that look like dicts/lists
+    but crash on json.dumps(). This deep-converts everything.
+    """
+    if isinstance(obj, dict):
+        return {k: _proto_to_python(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_proto_to_python(v) for v in obj]
+    # Protobuf MapComposite behaves dict-like, RepeatedComposite list-like
+    if hasattr(obj, 'items'):  # MapComposite
+        return {k: _proto_to_python(v) for k, v in obj.items()}
+    if hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes)):
+        return [_proto_to_python(v) for v in obj]
+    return obj
+
+
+# ─────────────────────────────────────────────
 #  Normalized Response Objects
 #  (Mimics Anthropic's format so existing code
 #   works with zero changes)
@@ -511,7 +533,7 @@ def _gemini_response_to_normalized(response):
             if hasattr(part, "function_call") and part.function_call.name:
                 has_tool_calls = True
                 fc = part.function_call
-                args = dict(fc.args) if fc.args else {}
+                args = _proto_to_python(dict(fc.args)) if fc.args else {}
                 call_id = f"call_{uuid.uuid4().hex[:24]}"
                 blocks.append(ContentBlock(
                     "tool_use",
@@ -698,7 +720,7 @@ class GeminiStreamWrapper:
             for part in chunk.candidates[0].content.parts:
                 if hasattr(part, "function_call") and part.function_call.name:
                     fc = part.function_call
-                    args = dict(fc.args) if fc.args else {}
+                    args = _proto_to_python(dict(fc.args)) if fc.args else {}
                     call_id = f"call_{uuid.uuid4().hex[:24]}"
                     self._collected_tool_calls.append({
                         "name": fc.name,

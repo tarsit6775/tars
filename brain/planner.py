@@ -12,6 +12,7 @@ import os
 import re
 import time
 import json
+import logging
 import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,6 +25,9 @@ from brain.threads import ThreadManager
 from brain.metacognition import MetaCognitionMonitor
 from brain.decision_cache import DecisionCache
 from utils.event_bus import event_bus
+from memory.error_tracker import error_tracker
+
+logger = logging.getLogger("TARS")
 
 # Tools that depend on previous results — must run sequentially
 DEPENDENT_TOOLS = {"verify_result", "send_imessage", "wait_for_reply", "checkpoint"}
@@ -48,7 +52,7 @@ class TARSBrain:
                 base_url=brain_cfg.get("base_url"),
             )
             self.brain_model = brain_cfg["model"]
-            print(f"  🧠 Brain: {brain_cfg['provider']}/{self.brain_model}")
+            logger.info(f"  🧠 Brain: {brain_cfg['provider']}/{self.brain_model}")
         else:
             self.client = LLMClient(
                 provider=llm_cfg["provider"],
@@ -56,7 +60,7 @@ class TARSBrain:
                 base_url=llm_cfg.get("base_url"),
             )
             self.brain_model = llm_cfg["heavy_model"]
-            print(f"  🧠 Brain: {llm_cfg['provider']}/{self.brain_model} (single-provider)")
+            logger.info(f"  🧠 Brain: {llm_cfg['provider']}/{self.brain_model} (single-provider)")
 
         # Phase 31: Graceful degradation chain
         self._primary_client = self.client
@@ -74,7 +78,7 @@ class TARSBrain:
                 base_url=fb_cfg.get("base_url"),
             )
             self._fallback_model = fb_cfg["model"]
-            print(f"  🔄 Fallback: {fb_cfg['provider']}/{self._fallback_model}")
+            logger.info(f"  🔄 Fallback: {fb_cfg['provider']}/{self._fallback_model}")
 
         self.heavy_model = llm_cfg.get("heavy_model", llm_cfg.get("model", ""))
         self.fast_model = llm_cfg.get("fast_model", self.heavy_model)
@@ -94,11 +98,6 @@ class TARSBrain:
         # Phase 26: Decision Cache
         self.decision_cache = DecisionCache(base_dir=base_dir)
 
-        # Phase 24: Error Pattern Database
-        self._error_patterns = {}
-        self._error_db_path = os.path.join(base_dir, "memory", "error_patterns.json")
-        self._load_error_patterns()
-
         # Thread safety: parallel tasks share this brain instance.
         # The lock serializes process() calls so conversation_history
         # and metacognition state don't get corrupted.
@@ -110,6 +109,8 @@ class TARSBrain:
         self._compacted_summary = ""
         self.max_tool_loops = 50
         self._tool_loop_count = 0
+        self._metacog_loop_count = 0  # Consecutive metacognition loop detections
+        self._brain_sent_imessage = False  # Track if brain already notified user
 
         # Phase 28: Reasoning Trace
         self._reasoning_trace = []
@@ -169,11 +170,11 @@ class TARSBrain:
             has_active_thread=self.threads.has_active_thread,
             batch_type=batch_type,
         )
-        print(f"  🎯 Intent: {intent}")
+        logger.info(f"  🎯 Intent: {intent}")
 
         # ── Step 3: Route to thread ──
         thread = self.threads.route_message(text, intent.type, intent.confidence)
-        print(f"  📎 Thread: {thread.topic} ({thread.id})")
+        logger.info(f"  📎 Thread: {thread.topic} ({thread.id})")
 
         # ── Step 4: Decision cache lookup (Phase 26) ──
         cached = None
@@ -181,7 +182,7 @@ class TARSBrain:
         if domain_hints:
             cached = self.decision_cache.lookup(intent.type, domain_hints, text)
             if cached:
-                print(f"  💾 Decision cache hit (reliability {cached.reliability:.0f}%)")
+                logger.info(f"  💾 Decision cache hit (reliability {cached.reliability:.0f}%)")
                 event_bus.emit("decision_cache_hit", {"task": text[:100], "reliability": cached.reliability})
 
         # ── Step 5: Multi-query memory recall (Phase 19) ──
@@ -197,13 +198,15 @@ class TARSBrain:
         # ── Step 7: Dynamic tool pruning (Phase 22) ──
         active_tools = get_tools_for_intent(intent)
         if len(active_tools) < len(TARS_TOOLS):
-            print(f"  🔧 Pruned tools: {len(TARS_TOOLS)} → {len(active_tools)}")
+            logger.info(f"  🔧 Pruned tools: {len(TARS_TOOLS)} → {len(active_tools)}")
 
         # ── Step 8: Build thread context ──
         thread_context = self.threads.get_context_for_brain()
 
         # ── Step 9: Reset metacognition (Phase 34) ──
         self.metacognition.reset()
+        self._metacog_loop_count = 0
+        self._brain_sent_imessage = False
         self._reasoning_trace = []
 
         # ── Step 10: Think (LLM loop) ──
@@ -269,7 +272,7 @@ class TARSBrain:
             self.client = self._primary_client
             self.brain_model = self._primary_model
             self._degradation_level = 0
-            print(f"  🔄 Restored primary brain: {self._primary_model}")
+            logger.info(f"  🔄 Restored primary brain: {self._primary_model}")
 
         model = self.brain_model
         event_bus.emit("thinking_start", {"model": model})
@@ -281,7 +284,7 @@ class TARSBrain:
         self._message_count += 1
 
         if time_since_last > self._conversation_timeout and self.conversation_history:
-            print(f"  💭 Conversation gap: {int(time_since_last)}s — soft-resetting context")
+            logger.info(f"  💭 Conversation gap: {int(time_since_last)}s — soft-resetting context")
             self._force_compact()
 
         # ── Inject cached decision hint ──
@@ -341,6 +344,22 @@ class TARSBrain:
                     "recommendation": metacog.recommendation,
                 })
 
+                # Force-break if metacognition detects sustained looping
+                if metacog.is_looping:
+                    self._metacog_loop_count += 1
+                    # send_imessage loops are critical — break immediately
+                    if metacog.loop_tool == "send_imessage":
+                        logger.warning(f"  🛑 Force-breaking: send_imessage loop detected ({metacog.loop_count} calls)")
+                        event_bus.emit("error", {"message": "Force-break: send_imessage loop"})
+                        return "⚠️ I detected I was stuck in a messaging loop and stopped. The task may be partially complete."
+                    # Other tools: allow 3 consecutive metacognition warnings before force-break
+                    if self._metacog_loop_count >= 3:
+                        logger.warning(f"  🛑 Force-breaking: metacognition detected {self._metacog_loop_count} consecutive loops")
+                        event_bus.emit("error", {"message": "Force-break: sustained tool loop detected"})
+                        return "⚠️ I detected I was stuck in a loop and stopped. The task may be partially complete."
+                else:
+                    self._metacog_loop_count = 0
+
             # ── Call LLM (with error handling + failover) ──
             response, model = self._call_llm(system_prompt, model, tools=tools)
             if response is None:
@@ -385,6 +404,24 @@ class TARSBrain:
                 for block in assistant_content:
                     if hasattr(block, "text"):
                         final_text += block.text
+
+                # ── Gemini empty-response recovery ──
+                # If the LLM returned an empty/very short response after tool calls,
+                # it likely "gave up" mid-task. Re-prompt it to continue.
+                if self._tool_loop_count > 1 and len(final_text.strip()) < 10:
+                    if retry_count < 2:
+                        retry_count += 1
+                        logger.warning(f"  ⚠️ Empty response after {self._tool_loop_count} tool loops — re-prompting LLM (retry {retry_count}/2)")
+                        self.conversation_history.append({
+                            "role": "user",
+                            "content": (
+                                "You returned an empty response but the task is not complete yet. "
+                                "Review what you've done so far and continue with the remaining steps. "
+                                "Use the appropriate tools to finish the task."
+                            ),
+                        })
+                        event_bus.emit("thinking_start", {"model": model})
+                        continue
 
                 # Phase 28: Log final reasoning
                 self._reasoning_trace.append({
@@ -438,7 +475,7 @@ class TARSBrain:
                     content_preview = f"[{len(last_content)} blocks]"
                 else:
                     content_preview = str(type(last_content))
-                print(f"  📡 LLM call: {hist_len} messages, last={last_role}: {content_preview}")
+                logger.debug(f"  📡 LLM call: {hist_len} messages, last={last_role}: {content_preview}")
 
             # ── Try streaming first (for real-time dashboard) ──
             with self.client.stream(
@@ -464,14 +501,14 @@ class TARSBrain:
         except Exception as e:
             error_str = str(e)
             error_type = type(e).__name__
-            print(f"  ⚠️ Brain LLM error ({error_type}): {error_str[:200]}")
+            logger.warning(f"  ⚠️ Brain LLM error ({error_type}): {error_str[:200]}")
 
             # ── API key / permission errors → try fallback before giving up ──
             if "API key expired" in error_str or "PERMISSION_DENIED" in error_str or "leaked" in error_str.lower():
                 event_bus.emit("error", {"message": f"API key error: {error_str[:200]}"})
                 # Try fallback provider before giving up
                 if self._fallback_client and not self._using_fallback:
-                    print(f"  🔄 Primary API key revoked — failing over to fallback provider")
+                    logger.warning(f"  🔄 Primary API key revoked — failing over to fallback provider")
                     result, new_model = self._failover_to_fallback(system_prompt, tools=tools)
                     if result is not None:
                         return result, new_model
@@ -482,7 +519,7 @@ class TARSBrain:
             if "tool_use_failed" in error_str:
                 recovered = _parse_failed_tool_call(e)
                 if recovered:
-                    print(f"  🔧 Brain: Recovered malformed tool call")
+                    logger.info(f"  🔧 Brain: Recovered malformed tool call")
                     call_duration = time.time() - call_start
                     self._emit_api_stats(model, recovered, call_duration)
                     return recovered, model
@@ -521,7 +558,7 @@ class TARSBrain:
 
             else:
                 # ── Non-retryable, non-key error: try non-streaming ──
-                print(f"  🔧 Brain: Trying non-streaming fallback...")
+                logger.info(f"  🔧 Brain: Trying non-streaming fallback...")
                 try:
                     response = self.client.create(
                         model=model,
@@ -532,7 +569,7 @@ class TARSBrain:
                     )
                     call_duration = time.time() - call_start
                     self._emit_api_stats(model, response, call_duration)
-                    print(f"  🔧 Brain: Non-streaming fallback succeeded")
+                    logger.info(f"  🔧 Brain: Non-streaming fallback succeeded")
                     return response, model
                 except Exception as e2:
                     self._record_error_pattern("llm_call", str(e2), model)
@@ -550,7 +587,7 @@ class TARSBrain:
         self.client = self._fallback_client
         model = self._fallback_model
         self.brain_model = model
-        print(f"  🔄 FAILOVER: Switching brain to {model} (degradation={self._degradation_level})")
+        logger.warning(f"  🔄 FAILOVER: Switching brain to {model} (degradation={self._degradation_level})")
         event_bus.emit("status_change", {"status": "online", "label": f"FAILOVER → {model}"})
 
         try:
@@ -562,11 +599,11 @@ class TARSBrain:
                 messages=self.conversation_history,
             )
             self._emit_api_stats(model, response, 0)
-            print(f"  ✅ Fallback provider succeeded: {model}")
+            logger.info(f"  ✅ Fallback provider succeeded: {model}")
             return response, model
         except Exception as fb_e:
             self._degradation_level = 2
-            print(f"  ⚠️ Fallback also failed: {fb_e}")
+            logger.warning(f"  ⚠️ Fallback also failed: {fb_e}")
             return None, model
 
     def _retry_with_backoff(self, system_prompt, model, is_rate_limit, error_type, tools=None):
@@ -583,7 +620,7 @@ class TARSBrain:
                 base, cap = 1.0, 30.0
             delay = min(cap, base * (2 ** attempt)) * _rand.uniform(0.5, 1.0)
 
-            print(f"  ⏳ Retry {attempt}/{max_api_retries} in {delay:.1f}s ({error_type})")
+            logger.info(f"  ⏳ Retry {attempt}/{max_api_retries} in {delay:.1f}s ({error_type})")
             event_bus.emit("status_change", {
                 "status": "waiting",
                 "label": f"RATE LIMITED — retry in {int(delay)}s"
@@ -599,12 +636,12 @@ class TARSBrain:
                     messages=self.conversation_history,
                 )
                 self._emit_api_stats(model, response, 0)
-                print(f"  ✅ Retry {attempt} succeeded")
+                logger.info(f"  ✅ Retry {attempt} succeeded")
                 event_bus.emit("status_change", {"status": "online", "label": "THINKING"})
                 return response
             except Exception as retry_e:
                 error_str = str(retry_e)
-                print(f"  ⚠️ Retry {attempt} failed: {error_str[:150]}")
+                logger.warning(f"  ⚠️ Retry {attempt} failed: {error_str[:150]}")
 
                 # Mid-retry failover
                 if attempt == 2 and self._fallback_client and not self._using_fallback:
@@ -613,7 +650,7 @@ class TARSBrain:
                     self.client = self._fallback_client
                     model = self._fallback_model
                     self.brain_model = model
-                    print(f"  🔄 FAILOVER (mid-retry): Switching to {model}")
+                    logger.warning(f"  🔄 FAILOVER (mid-retry): Switching to {model}")
 
                 if attempt == max_api_retries:
                     event_bus.emit("error", {
@@ -639,7 +676,7 @@ class TARSBrain:
 
         # ── Parallel execution for independent tools ──
         if len(tool_calls) > 1 and all(tc.name in PARALLEL_SAFE for tc in tool_calls):
-            print(f"  ⚡ Parallel execution: {', '.join(tc.name for tc in tool_calls)}")
+            logger.debug(f"  ⚡ Parallel execution: {', '.join(tc.name for tc in tool_calls)}")
             with ThreadPoolExecutor(max_workers=min(len(tool_calls), 4)) as pool:
                 futures = {}
                 start_times = {}
@@ -680,7 +717,7 @@ class TARSBrain:
                 )
 
                 # Execute
-                print(f"  🔧 Executing: {tool_name}({tool_input})")
+                logger.info(f"  🔧 Executing: {tool_name}({tool_input})")
                 exec_start = time.time()
                 result = self.tool_executor.execute(tool_name, tool_input)
                 exec_duration = time.time() - exec_start
@@ -691,17 +728,37 @@ class TARSBrain:
                 success = result.get("success", not result.get("error", False))
                 self.metacognition.record_tool_call(tool_name, tool_input, success, exec_duration)
 
+                # Track if brain sent an iMessage (so _run_task doesn't double-send)
+                if tool_name == "send_imessage" and success:
+                    self._brain_sent_imessage = True
+
                 # Phase 24: Record error pattern on failure
                 if not success:
+                    error_content = result.get("content", "unknown error")
                     self._record_error_pattern(
                         tool_name,
-                        result.get("content", "unknown error"),
+                        error_content,
                         str(tool_input)[:200],
                     )
                     # Feed to self-healing engine for pattern detection
                     self._record_self_heal_failure(
-                        tool_name, result.get("content", ""), str(tool_input)[:200],
+                        tool_name, error_content, str(tool_input)[:200],
                     )
+                    # Phase 35: Error tracker — check for known auto-fixes
+                    fix_info = error_tracker.record_error(
+                        error=error_content,
+                        context=tool_name,
+                        tool=tool_name,
+                        details=str(tool_input)[:200],
+                    )
+                    if fix_info and fix_info.get("has_fix"):
+                        logger.info(f"  🩹 Known fix available: {fix_info['fix'][:80]}")
+                        event_bus.emit("auto_fix_available", {
+                            "tool": tool_name,
+                            "fix": fix_info["fix"][:200],
+                            "confidence": fix_info.get("confidence", 0),
+                            "times_applied": fix_info.get("times_applied", 0),
+                        })
 
                 # Phase 26: Record in decision cache on success
                 if success and tool_name not in ("think", "scan_environment"):
@@ -948,7 +1005,7 @@ class TARSBrain:
             self._compacted_summary = head + "\n... (compacted) ...\n" + tail
 
         self.conversation_history = recent
-        print(f"  📦 Compacted: {len(old_messages)} msgs (~{est_tokens} tokens) → summary, keeping {len(recent)}")
+        logger.info(f"  📦 Compacted: {len(old_messages)} msgs (~{est_tokens} tokens) → summary, keeping {len(recent)}")
 
     def _force_compact(self):
         """Force-compact all history into summary. Used on conversation timeout."""
@@ -981,7 +1038,7 @@ class TARSBrain:
             self._compacted_summary = head + "\n... (compacted) ...\n" + tail
 
         self.conversation_history = []
-        print(f"  📦 Force-compacted conversation ({len(summary_parts)} entries)")
+        logger.info(f"  📦 Force-compacted conversation ({len(summary_parts)} entries)")
 
     # ═══════════════════════════════════════════════════
     #  EMERGENCY & RECOVERY
@@ -1049,7 +1106,7 @@ class TARSBrain:
             "confidence_trend": metacog_stats.get("confidence_trend", "stable"),
         }
         stats["decision_cache_size"] = len(self.decision_cache._entries)
-        stats["error_patterns"] = len(self._error_patterns)
+        stats["error_patterns"] = error_tracker.get_stats().get("unique_errors", 0)
         stats["degradation_level"] = self._degradation_level
         return stats
 
@@ -1063,16 +1120,20 @@ class TARSBrain:
         return list(self._reasoning_trace)
 
     def get_error_pattern_stats(self) -> dict:
-        """Get summary of recorded error patterns."""
+        """Get summary of recorded error patterns via error_tracker."""
+        stats = error_tracker.get_stats()
+        top_errors = error_tracker.get_top_errors(20)
         return {
-            "total_patterns": len(self._error_patterns),
+            "total_patterns": stats.get("unique_errors", 0),
+            "fix_rate": stats.get("fix_rate", "0%"),
             "patterns": {
-                sig: {
-                    "count": data.get("count", 0),
-                    "last_seen": data.get("last_seen", ""),
-                    "context": data.get("context", "")[:100],
+                err.get("context", "unknown"): {
+                    "count": err.get("count", 0),
+                    "last_seen": err.get("last_seen", ""),
+                    "context": err.get("context", "")[:100],
+                    "has_fix": err.get("has_fix", False),
                 }
-                for sig, data in list(self._error_patterns.items())[:20]
+                for err in top_errors
             },
         }
 
@@ -1176,7 +1237,7 @@ class TARSBrain:
                     )
 
         except Exception as e:
-            print(f"  ⚠️ Reflection error: {e}")
+            logger.warning(f"  ⚠️ Reflection error: {e}")
 
     def _record_brain_outcome(self, task, response, intent):
         """
@@ -1211,7 +1272,7 @@ class TARSBrain:
                 result=result,
             )
         except Exception as e:
-            print(f"  ⚠️ Brain outcome recording error: {e}")
+            logger.warning(f"  ⚠️ Brain outcome recording error: {e}")
 
     def _record_self_heal_failure(self, tool_name, error_content, details=""):
         """Feed tool failures into the self-healing engine for pattern detection.
@@ -1265,90 +1326,41 @@ class TARSBrain:
             pass
 
     # ═══════════════════════════════════════════════════
-    #  ERROR PATTERN DATABASE (Phase 24)
+    #  ERROR PATTERN DATABASE (Phase 24) — Consolidated
+    #  Uses memory/error_tracker.py singleton (single source of truth)
     # ═══════════════════════════════════════════════════
 
-    def _extract_error_signature(self, error_str):
-        """Extract a normalized signature from an error string."""
-        # Remove dynamic values (paths, numbers, timestamps)
-        sig = re.sub(r"/[\w/\-.]+", "<PATH>", error_str)
-        sig = re.sub(r"\b\d{4,}\b", "<NUM>", sig)
-        sig = re.sub(r"0x[0-9a-fA-F]+", "<HEX>", sig)
-        sig = re.sub(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "<EMAIL>", sig)
-        # Truncate
-        return sig[:200]
-
     def _record_error_pattern(self, context, error_str, details=""):
-        """Record an error pattern for future avoidance."""
-        sig = self._extract_error_signature(error_str)
-        key = f"{context}:{sig}"
-
-        if key in self._error_patterns:
-            self._error_patterns[key]["count"] += 1
-            self._error_patterns[key]["last_seen"] = datetime.now().isoformat()
-        else:
-            self._error_patterns[key] = {
-                "signature": sig,
-                "context": context,
-                "details": details[:300],
-                "count": 1,
-                "first_seen": datetime.now().isoformat(),
-                "last_seen": datetime.now().isoformat(),
-            }
-
-        # Save periodically (every 5 new patterns)
-        if sum(1 for p in self._error_patterns.values() if p["count"] == 1) % 5 == 0:
-            self._save_error_patterns()
+        """Record an error pattern via the consolidated error_tracker."""
+        error_tracker.record_error(
+            error=error_str[:500],
+            context=context,
+            tool=context,
+            details=details[:200],
+        )
 
     def _get_error_warning(self, task_text):
-        """Check if we have error patterns that match this task context."""
-        if not self._error_patterns:
-            return ""
-
-        warnings = []
-        task_lower = task_text.lower()
-        for key, data in self._error_patterns.items():
-            context = data.get("context", "").lower()
-            if context in task_lower or any(
-                w in task_lower for w in context.split("_") if len(w) > 3
-            ):
-                if data.get("count", 0) >= 2:
+        """Check error_tracker for known issues relevant to this task."""
+        try:
+            top_errors = error_tracker.get_top_errors(10)
+            if not top_errors:
+                return ""
+            warnings = []
+            task_lower = task_text.lower()
+            for err in top_errors:
+                ctx = err.get("context", "").lower()
+                count = err.get("count", 0)
+                if count >= 2 and (ctx in task_lower or any(
+                    w in task_lower for w in ctx.split("_") if len(w) > 3
+                )):
+                    has_fix = "✅ fix known" if err.get("has_fix") else "❌ no fix"
                     warnings.append(
-                        f"⚠️ Previously failed {data['count']}x on '{data['context']}': "
-                        f"{data['signature'][:100]}"
+                        f"⚠️ Previously failed {count}x on '{ctx}': "
+                        f"{err.get('error', '')[:100]} [{has_fix}]"
                     )
-
-        if warnings:
-            return "\n".join(warnings[:3])
-        return ""
-
-    def _load_error_patterns(self):
-        """Load error patterns from disk."""
-        try:
-            if os.path.exists(self._error_db_path):
-                with open(self._error_db_path, "r") as f:
-                    self._error_patterns = json.load(f)
-                print(f"  📊 Loaded {len(self._error_patterns)} error patterns")
+            return "\n".join(warnings[:3]) if warnings else ""
         except Exception:
-            self._error_patterns = {}
-
-    def _save_error_patterns(self):
-        """Persist error patterns to disk."""
-        try:
-            # Keep only top 100 most frequent
-            if len(self._error_patterns) > 100:
-                sorted_patterns = sorted(
-                    self._error_patterns.items(),
-                    key=lambda x: x[1].get("count", 0),
-                    reverse=True,
-                )
-                self._error_patterns = dict(sorted_patterns[:100])
-
-            os.makedirs(os.path.dirname(self._error_db_path), exist_ok=True)
-            with open(self._error_db_path, "w") as f:
-                json.dump(self._error_patterns, f, indent=2)
-        except Exception as e:
-            print(f"  ⚠️ Failed to save error patterns: {e}")
+            return ""
 
     # ═══════════════════════════════════════════════════
     #  CROSS-SESSION CONTINUITY (Phase 33)
@@ -1371,7 +1383,7 @@ class TARSBrain:
             with open(self._session_state_path, "w") as f:
                 json.dump(state, f, indent=2)
         except Exception as e:
-            print(f"  ⚠️ Failed to save session state: {e}")
+            logger.warning(f"  ⚠️ Failed to save session state: {e}")
 
     def _restore_session_state(self):
         """Restore session state from previous run."""
@@ -1382,13 +1394,13 @@ class TARSBrain:
 
                 last_active = state.get("last_active", "")
                 if last_active:
-                    print(f"  📋 Restoring session (last active: {last_active})")
+                    logger.info(f"  📋 Restoring session (last active: {last_active})")
 
                 self._compacted_summary = state.get("compacted_summary", "")
                 self._message_count = state.get("message_count", 0)
 
                 # If we were degraded, start fresh
                 if state.get("degradation_level", 0) > 0:
-                    print(f"  ⚠️ Previous session was degraded — starting fresh")
+                    logger.warning(f"  ⚠️ Previous session was degraded — starting fresh")
         except Exception:
             pass

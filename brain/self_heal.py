@@ -20,12 +20,16 @@ Flow:
 
 import os
 import json
+import logging
 import time
 import threading
 from datetime import datetime
 from typing import Dict, Optional, List
 
 from utils.event_bus import event_bus
+from memory.error_tracker import error_tracker
+
+logger = logging.getLogger("TARS")
 
 # TARS's own codebase root
 TARS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -331,7 +335,7 @@ class SelfHealEngine:
                 proposal.status = "rejected"
                 return None
         except Exception as e:
-            print(f"  ⚠️ Self-heal approval error: {e}")
+            logger.warning(f"Self-heal approval error: {e}")
             return None
 
     def execute_healing(self, proposal: HealingProposal, executor) -> dict:
@@ -356,6 +360,18 @@ class SelfHealEngine:
                 self._healing_history.append(proposal.to_dict())
                 self._save_history()
                 event_bus.emit("self_heal_completed", proposal.to_dict())
+                # Record the fix in error tracker for future auto-application
+                try:
+                    error_tracker.record_fix(
+                        error=proposal.trigger,
+                        fix=proposal.prescription[:500],
+                        context=proposal.category,
+                        source="self_heal",
+                        success=True,
+                        confidence=0.85,
+                    )
+                except Exception:
+                    pass  # Tracker is optional
             else:
                 proposal.status = "failed"
                 proposal.result = result.get("content", "Unknown failure")[:500]
@@ -492,7 +508,7 @@ class SelfHealEngine:
             if os.path.exists(self._heal_log_path):
                 with open(self._heal_log_path, "r") as f:
                     self._healing_history = json.load(f)
-                print(f"  🩹 Loaded {len(self._healing_history)} healing records")
+                logger.info(f"🩹 Loaded {len(self._healing_history)} healing records")
         except Exception:
             self._healing_history = []
 
@@ -506,4 +522,4 @@ class SelfHealEngine:
             with open(self._heal_log_path, "w") as f:
                 json.dump(self._healing_history, f, indent=2)
         except Exception as e:
-            print(f"  ⚠️ Failed to save healing history: {e}")
+            logger.warning(f"Failed to save healing history: {e}")

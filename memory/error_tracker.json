@@ -1,0 +1,80 @@
+{
+  "deploy_browser_agent:Connection refused to port <NUM>": {
+    "signature": "Connection refused to port <NUM>",
+    "context": "deploy_browser_agent",
+    "raw_error": "Connection refused to port 8080",
+    "tool": "deploy_browser_agent",
+    "agent": "browser",
+    "details": "task: search for flights",
+    "count": 2,
+    "first_seen": "2026-02-16T12:00:38.444763",
+    "last_seen": "2026-02-16T12:00:38.444977",
+    "fixes": [
+      {
+        "fix": "Restart Chrome or check if CDP is running on correct port",
+        "source": "manual",
+        "success": false,
+        "confidence": 0.6000000000000001,
+        "applied_at": "2026-02-16T12:00:38.444801"
+      }
+    ],
+    "auto_fixable": false,
+    "fixed_count": 1
+  },
+  "run_quick_command:[stderr]: awk: calling undefined function strftime\n input record number 1, file \n source line number 1": {
+    "signature": "[stderr]: awk: calling undefined function strftime\n input record number 1, file \n source line number 1",
+    "context": "run_quick_command",
+    "raw_error": "[stderr]: awk: calling undefined function strftime\n input record number 1, file \n source line number 1",
+    "tool": "run_quick_command",
+    "agent": "",
+    "details": "{'command': '\\n{\\n  echo \"Most Recently Modified Files in Downloads:\"\\n  find ~/Downloads -type f -print0 | xargs -0 stat -f \"%m %N %z\" | sort -rn | head -n 5 | awk \\'{print strftime(\"%Y-%m-%d %H:%M:%",
+    "count": 1,
+    "first_seen": "2026-02-16T12:56:05.569968",
+    "last_seen": "2026-02-16T12:56:05.569969",
+    "fixes": [],
+    "auto_fixable": false,
+    "fixed_count": 0
+  },
+  "run_quick_command:[stderr]:   File \"<PATH>\", line 30\n    f.write(f'Fibonacci number: {result[0]}\n                                           ^\nSyntaxError: EOL while scanning string literal": {
+    "signature": "[stderr]:   File \"<PATH>\", line 30\n    f.write(f'Fibonacci number: {result[0]}\n                                           ^\nSyntaxError: EOL while scanning string literal",
+    "context": "run_quick_command",
+    "raw_error": "[stderr]:   File \"/Users/abdullah/Desktop/parallel_test_3_fibonacci.py\", line 30\n    f.write(f'Fibonacci number: {result[0]}\n                                           ^\nSyntaxError: EOL while scanning string literal",
+    "tool": "run_quick_command",
+    "agent": "",
+    "details": "{'command': 'python3 /Users/abdullah/Desktop/parallel_test_3_fibonacci.py'}",
+    "count": 4,
+    "first_seen": "2026-02-16T12:56:19.796351",
+    "last_seen": "2026-02-16T12:56:41.593767",
+    "fixes": [],
+    "auto_fixable": false,
+    "fixed_count": 0
+  },
+  "verify_result:\u274c NOT VERIFIED \u2014 Path does not exist: <PATH>": {
+    "signature": "\u274c NOT VERIFIED \u2014 Path does not exist: <PATH>",
+    "context": "verify_result",
+    "raw_error": "\u274c NOT VERIFIED \u2014 Path does not exist: /Users/abdullah/Desktop/parallel_test_3_fibonacci.txt",
+    "tool": "verify_result",
+    "agent": "",
+    "details": "{'check': '~/Desktop/parallel_test_3_fibonacci.txt', 'type': 'file', 'expected': 'Fibonacci number: 0'}",
+    "count": 2,
+    "first_seen": "2026-02-16T12:56:29.546162",
+    "last_seen": "2026-02-16T12:56:41.595050",
+    "fixes": [],
+    "auto_fixable": false,
+    "fixed_count": 0
+  },
+  "run_quick_command:[stderr]: Traceback (most recent call last):\n  File \"<PATH>\", line 22, in <module>\n    ratio = fibonacci_numbers[i] / fibonacci_numbers[i-1]\nZeroDivisionError: division by zero": {
+    "signature": "[stderr]: Traceback (most recent call last):\n  File \"<PATH>\", line 22, in <module>\n    ratio = fibonacci_numbers[i] / fibonacci_numbers[i-1]\nZeroDivisionError: division by zero",
+    "context": "run_quick_command",
+    "raw_error": "[stderr]: Traceback (most recent call last):\n  File \"/Users/abdullah/Desktop/parallel_test_3_fibonacci.py\", line 22, in <module>\n    ratio = fibonacci_numbers[i] / fibonacci_numbers[i-1]\nZeroDivisionError: division by zero",
+    "tool": "run_quick_command",
+    "agent": "",
+    "details": "{'command': 'python3 ~/Desktop/parallel_test_3_fibonacci.py'}",
+    "count": 1,
+    "first_seen": "2026-02-16T12:56:46.108741",
+    "last_seen": "2026-02-16T12:56:46.108742",
+    "fixes": [],
+    "auto_fixable": false,
+    "fixed_count": 0
+  }
+}

@@ -121,6 +121,51 @@ The project supports multiple LLM providers via `brain/llm_client.py`:
 
 ---
 
+## Error Tracker + Fix Registry (`memory/error_tracker.py`)
+
+The error tracker is a **persistent log of every error**, paired with known fixes. Over time, TARS auto-heals from past lessons:
+
+```
+Error happens → tracker.record_error()
+  ├─ New error → log it, return None
+  └─ Known error with fix → return the fix immediately (auto-heal)
+
+Fix discovered → tracker.record_fix()
+  └─ Next time same error → auto-applied
+```
+
+**Key APIs:**
+```python
+from memory.error_tracker import error_tracker  # singleton
+
+# Record an error (returns fix info if known)
+fix_info = error_tracker.record_error(error="...", context="tool_name", tool="...", agent="...")
+
+# Record a fix for a known error
+error_tracker.record_fix(error="...", fix="description", context="...", source="self_heal")
+
+# Check if fix exists without recording
+error_tracker.get_known_fix(error="...", context="...")
+
+# Dashboard stats
+error_tracker.get_stats()         # {unique_errors, auto_fixable, fix_rate, ...}
+error_tracker.get_top_errors(10)   # Most frequent errors
+error_tracker.get_unfixed_errors() # Recurring errors without fixes
+error_tracker.get_error_report()   # Human-readable report
+```
+
+**Data flow:**
+- `brain/planner.py` → records tool failures + checks for auto-fixes
+- `executor.py` → records agent deployment failures
+- `tars.py` → records task-level failures
+- `brain/self_heal.py` → records fixes when self-healing succeeds
+
+**Events emitted:** `"error_tracked"`, `"fix_recorded"`, `"auto_fix_available"`
+
+**Persistence:** `memory/error_tracker.json` (max 200 entries, auto-pruned)
+
+---
+
 ## Sub-Agent System (`agents/`)
 
 - `base_agent.py` — base class. All agents inherit from it.
@@ -150,6 +195,7 @@ The project supports multiple LLM providers via `brain/llm_client.py`:
 | `utils/safety.py` | Destructive command detection | `is_destructive()` |
 | `server.py` | Dashboard HTTP + WebSocket | Ports 8420/8421 |
 | `memory/memory_manager.py` | Flat-file memory ops | `MemoryManager` |
+| `memory/error_tracker.py` | Error log + fix registry | `error_tracker` singleton |
 
 ---
 
@@ -214,3 +260,11 @@ Dashboard: `http://localhost:8420` (HTTP) + WebSocket on `:8421`.
 ### 2026-02-16 — Copilot garbles inline edits
 **Problem**: When making changes, Copilot sometimes rewrites entire files, drops imports, reorders code, or produces garbled partial edits.
 **Fix**: Added § "Editing Rules" at the top. Copilot must make minimal surgical edits, preserve all imports, never reorder existing code, and never truncate with `...` placeholders.
+
+### 2026-02-16 — Errors repeat without learning
+**Problem**: TARS would hit the same error (e.g. missing 'command' param 11x, missing 'query' 18x) without ever learning from it. Self-heal existed but only proposed code changes — no persistent fix registry.
+**Fix**: Created `memory/error_tracker.py` — a persistent error log with fix registry. Wired into planner, executor, tars.py, and self_heal.py. Now every error is recorded, and when a fix is found (via self-heal or manual), it's auto-applied next time the same error recurs. The fix rate is tracked in stats.
+
+### 2026-02-17 — Agent text-only loop burns 40 steps
+**Problem**: Groq Llama outputs tool calls as `<function>done{"summary":"..."}</function>` text instead of proper tool_use blocks. `base_agent.py` didn't parse these, so the agent looped 36+ times with the same text output, burning through all 40 max steps with no result.
+**Fix**: Added `_parse_function_tags()` to `base_agent.py` — regex-parses `<function>` tags from text and executes `done()`/`stuck()` immediately. Also added text-only loop detection: if the agent outputs identical text 3x in a row, force-stop and return the content as best-effort result.

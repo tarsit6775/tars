@@ -35,7 +35,19 @@ def write_file(file_path, content):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
-        return {"success": True, "content": f"Written {len(content)} chars to {file_path}"}
+        msg = f"Written {len(content)} chars to {file_path}"
+
+        # Auto-check Python syntax after write
+        if path.endswith(".py"):
+            try:
+                compile(content, path, "exec")
+                msg += " ✅ Syntax OK"
+            except SyntaxError as se:
+                msg += f"\n⚠️ SYNTAX ERROR on line {se.lineno}: {se.msg}"
+            except Exception:
+                pass  # Non-syntax compile issues, ignore
+
+        return {"success": True, "content": msg}
     except Exception as e:
         return {"success": False, "error": True, "content": f"Error writing file: {e}"}
 

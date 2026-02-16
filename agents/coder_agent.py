@@ -29,48 +29,64 @@ from hands.file_manager import read_file, write_file, list_directory
 #  System Prompt
 # ─────────────────────────────────────────────
 
-CODER_SYSTEM_PROMPT = """You are TARS Coder Agent — the world's best software developer. You write flawless, production-quality code and never cut corners.
+CODER_SYSTEM_PROMPT = """You are TARS Coder Agent — an expert software developer. You write flawless code and verify everything works.
 
-## Your Capabilities
-- Write code in any language (Python, JavaScript, TypeScript, Rust, Go, C, HTML/CSS, etc.)
-- Build full projects from scratch with proper architecture
-- Debug complex issues systematically
-- Run tests, lint, and ensure code quality
-- Git version control (commit, push, branch, merge)
-- Install dependencies (pip, npm, brew)
-- Deploy applications
+## CRITICAL RULES (read these FIRST)
+
+### File Paths
+- ALWAYS use absolute paths starting with / (e.g., /Users/abdullah/Desktop/script.py)
+- NEVER use ~ in file paths — it does NOT expand in Python open() or write_file
+- If the task says "save to ~/Desktop/foo.py", YOU must use "/Users/abdullah/Desktop/foo.py"
+
+### File Names — USE EXACTLY WHAT WAS ASKED
+- If task says "create parallel_test_2_colors.py" → write to THAT EXACT filename
+- NEVER rename files to something "better" — use the EXACT name from the task
+- Wrong: task says "parallel_test_2_colors.py" → you write "color_palette.py" ← WRONG
+- Right: task says "parallel_test_2_colors.py" → you write "parallel_test_2_colors.py" ← RIGHT
+
+### Code Must Work — MANDATORY verify
+- After writing ANY script, you MUST run it with run_command to verify zero errors
+- If run_command shows a SyntaxError or any error, FIX IT before calling done()
+- NEVER call done() without verifying the code actually runs
+- Python: run with `python3 /absolute/path/to/script.py`
+
+### Python Syntax — Common Mistakes to AVOID
+- Match every opening ( { [ with its closing ) } ]
+- f-strings: use f"text {variable}" — never nest f"...{f'...'}" (use a temp variable)
+- Multi-line strings: use triple quotes, not concatenation with +
+- Indentation: use 4 spaces consistently, never mix tabs and spaces
+- Dictionary/list literals: ensure trailing commas don't cause issues
+- Print formatting: prefer f-strings over .format() or % for clarity
 
 ## Your Process
-1. **Understand first** — Read existing code before modifying. Use `read_file` and `list_dir` to understand the codebase.
-2. **Plan** — Break complex tasks into clear steps mentally before writing code.
-3. **Write clean code** — Production quality. Proper error handling. Good naming. Comments where non-obvious.
-4. **Test** — After writing code, run it to verify it works. Fix any errors immediately.
-5. **Iterate** — If something breaks, read the error, understand it, fix it. Don't blindly retry.
+1. **Read the task carefully** — note exact filenames, paths, and requirements
+2. **Plan** — break the task into steps mentally
+3. **Write code** — clean, production-quality, with error handling
+4. **VERIFY** — run the script with run_command. If errors, fix and re-run
+5. **Done** — only call done() after successful verification
 
-## Rules
-1. ALWAYS read a file before editing it. Never guess at file contents.
-2. Use `edit_file` for surgical changes. Use `write_file` only for new files or complete rewrites.
-3. After writing code, run it with `run_command` to verify it works.
-4. If tests exist, run them after making changes.
-5. Commit after meaningful milestones (not after every tiny change).
-6. NEVER leave code in a broken state. If you break something, fix it before calling done.
-7. Handle edge cases. Add error handling. Write robust code.
-8. For large projects, create proper directory structure, package files, and configs.
-9. When debugging: read the error carefully, check the relevant file, understand the root cause, then fix.
-10. Call `done` with a detailed summary of what you built/fixed. Call `stuck` with exactly what failed and why.
+## Tools
+- `write_file` — write a new file (provide FULL content, absolute path)
+- `read_file` — read existing file before editing
+- `edit_file` — surgical string replacement (read first!)
+- `run_command` — run shell commands, test scripts
+- `list_dir` — explore directories
+- `search_files` — find files by name or content
+- `git` — version control
+- `install_package` — pip/npm/brew install
+- `run_tests` — run test suites
 
-## Code Quality Standards
-- Functions should do one thing well
-- Use descriptive variable and function names
-- Add type hints in Python, types in TypeScript
-- Handle errors gracefully — try/except, if/else, not bare crashes
-- Follow the existing project's style and conventions
-- Keep files focused — don't put everything in one file
+## Code Quality
+- Functions do one thing well
+- Descriptive variable names
+- Error handling (try/except)
+- Comments for non-obvious logic
+- Type hints in Python
 
-## Current Environment
-- macOS with Python 3.9+, Node.js, git
-- Working directory is the project root
-- Shell: zsh
+## Environment
+- macOS, Python 3.9+, Node.js, git, zsh
+- Home directory: /Users/abdullah
+- Desktop: /Users/abdullah/Desktop
 """
 
 
@@ -101,38 +117,94 @@ class CoderAgent(BaseAgent):
         """Route coder tool calls to actual handlers."""
         try:
             if name == "run_command":
-                result = run_terminal(inp["command"], timeout=inp.get("timeout", 60))
+                cmd = inp.get("command", "")
+                if not cmd:
+                    return "ERROR: Missing 'command' parameter. Provide the shell command to run."
+                result = run_terminal(cmd, timeout=inp.get("timeout", 60))
                 return result.get("content", str(result))
 
             elif name == "read_file":
-                result = read_file(inp["path"])
+                path = inp.get("path", "")
+                if not path:
+                    return "ERROR: Missing 'path' parameter. Provide the absolute file path."
+                result = read_file(path)
                 return result.get("content", str(result))
 
             elif name == "write_file":
-                result = write_file(inp["path"], inp["content"])
-                return result.get("content", str(result))
+                path = inp.get("path", "")
+                content = inp.get("content", "")
+                if not path:
+                    return "ERROR: Missing 'path' parameter. Use an ABSOLUTE path like /Users/abdullah/Desktop/script.py"
+                if not content:
+                    return "ERROR: Missing 'content' parameter. Provide the full file content to write."
+                result = write_file(path, content)
+                msg = result.get("content", str(result))
+                # Auto syntax-check Python files after writing
+                expanded = os.path.expanduser(path)
+                if result.get("success") and expanded.endswith(".py"):
+                    check = run_terminal(
+                        f"python3 -c \"import py_compile; py_compile.compile('{expanded}', doraise=True)\"",
+                        timeout=10,
+                    )
+                    check_out = check.get("content", "")
+                    if not check.get("success") or "Error" in check_out or "SyntaxError" in check_out:
+                        msg += f"\n\n⚠️ SYNTAX ERROR DETECTED — fix this before calling done():\n{check_out}"
+                    else:
+                        msg += "\n✅ Syntax check passed."
+                return msg
 
             elif name == "edit_file":
-                return self._edit_file(inp["path"], inp["old_string"], inp["new_string"])
+                path = inp.get("path", "")
+                old_str = inp.get("old_string", "")
+                new_str = inp.get("new_string", "")
+                if not path:
+                    return "ERROR: Missing 'path' parameter."
+                if not old_str:
+                    return "ERROR: Missing 'old_string' parameter. Use read_file first, then provide exact text to replace."
+                result = self._edit_file(path, old_str, new_str)
+                # Auto syntax-check Python files after editing
+                expanded = os.path.expanduser(path)
+                if "✅ Edited" in result and expanded.endswith(".py"):
+                    check = run_terminal(
+                        f"python3 -c \"import py_compile; py_compile.compile('{expanded}', doraise=True)\"",
+                        timeout=10,
+                    )
+                    check_out = check.get("content", "")
+                    if not check.get("success") or "Error" in check_out or "SyntaxError" in check_out:
+                        result += f"\n\n⚠️ SYNTAX ERROR after edit — fix this before calling done():\n{check_out}"
+                    else:
+                        result += "\n✅ Syntax OK after edit."
+                return result
 
             elif name == "list_dir":
-                result = list_directory(inp["path"])
+                path = inp.get("path", "")
+                if not path:
+                    return "ERROR: Missing 'path' parameter."
+                result = list_directory(path)
                 return result.get("content", str(result))
 
             elif name == "search_files":
+                pattern = inp.get("pattern", "")
+                if not pattern:
+                    return "ERROR: Missing 'pattern' parameter."
                 return self._search_files(
-                    inp["pattern"],
+                    pattern,
                     inp.get("directory", os.getcwd()),
                     inp.get("content_search", False)
                 )
 
             elif name == "git":
-                result = run_terminal(f"git {inp['command']}", timeout=30)
+                git_cmd = inp.get("command", "")
+                if not git_cmd:
+                    return "ERROR: Missing 'command' parameter. Example: 'status', 'add .', 'commit -m \"msg\"'"
+                result = run_terminal(f"git {git_cmd}", timeout=30)
                 return result.get("content", str(result))
 
             elif name == "install_package":
                 mgr = inp.get("manager", "pip")
-                pkg = inp["package"]
+                pkg = inp.get("package", "")
+                if not pkg:
+                    return "ERROR: Missing 'package' parameter."
                 cmd_map = {
                     "pip": f"pip install {pkg}",
                     "pip3": f"pip3 install {pkg}",
@@ -144,7 +216,10 @@ class CoderAgent(BaseAgent):
                 return result.get("content", str(result))
 
             elif name == "run_tests":
-                result = run_terminal(inp["command"], timeout=inp.get("timeout", 120))
+                test_cmd = inp.get("command", "")
+                if not test_cmd:
+                    return "ERROR: Missing 'command' parameter. Example: 'pytest', 'python3 -m unittest'"
+                result = run_terminal(test_cmd, timeout=inp.get("timeout", 120))
                 return result.get("content", str(result))
 
             return f"Unknown coder tool: {name}"

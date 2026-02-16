@@ -669,7 +669,7 @@ class _ProgressCollector:
 
         if events:
             self._ticks_without_event = 0
-            # Build a compact progress summary
+            # Build a compact progress summary — dashboard only, never iMessage
             parts = []
             for ev in events[-5:]:  # Last 5 events max
                 if "agent" in ev and "task" in ev:
@@ -681,29 +681,23 @@ class _ProgressCollector:
                     parts.append(f"🔧 {ev['tool_name']}")
 
             if parts:
-                msg = "⏳ Progress:\n" + "\n".join(parts)
-                try:
-                    self._sender.send(msg)
-                    # Mirror progress to dashboard
-                    event_bus.emit("imessage_sent", {"message": msg})
-                except Exception:
-                    pass
+                # Dashboard-only progress — no iMessage spam
+                event_bus.emit("progress_update", {
+                    "message": "⏳ Progress:\n" + "\n".join(parts),
+                    "parts": parts,
+                })
         else:
-            # No events — send heartbeat so user knows we're alive
+            # No events — send dashboard heartbeat so UI knows we're alive
             self._ticks_without_event += 1
             elapsed = int(time.time() - self._start_time) if self._start_time else 0
-            # Send heartbeat every 60s of silence (every 2 ticks at 30s interval)
+            # Dashboard heartbeat every 60s of silence (every 2 ticks at 30s interval)
             if self._ticks_without_event >= 2 and elapsed > 45:
                 self._ticks_without_event = 0
                 agent_label = self._last_agent or "task"
                 minutes = elapsed // 60
-                try:
-                    heartbeat_msg = f"⏳ Still working on it... ({agent_label}, {minutes}m elapsed)"
-                    self._sender.send(heartbeat_msg)
-                    # Mirror heartbeat to dashboard
-                    event_bus.emit("imessage_sent", {"message": heartbeat_msg})
-                except Exception:
-                    pass
+                event_bus.emit("progress_update", {
+                    "message": f"⏳ Still working... ({agent_label}, {minutes}m elapsed)",
+                })
 
         self._schedule_tick()
 

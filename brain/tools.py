@@ -167,11 +167,11 @@ TARS_TOOLS = [
     # ═══════════════════════════════════════
     {
         "name": "send_imessage",
-        "description": "Send an iMessage to Abdullah. This is your ONLY output channel — Abdullah NEVER sees your text responses.\n\nUse for:\n- Responding to conversations (Type A): Keep it short, punchy, TARS-style\n- Answering questions (Type B): Give the answer directly\n- Task acknowledgment (Type C): 'On it 🎯'\n- Progress updates: 'Step 2/4 done — created the account'\n- Final reports: '✅ Done. [specific results]'\n- Asking for help: Ask a SPECIFIC question, not 'what should I do?'\n\nNEVER say 'done' unless verify_result confirmed success.\nKeep messages concise — 1-3 sentences unless reporting detailed results.",
+        "description": "Send an iMessage to Abdullah. This is your ONLY output channel — Abdullah NEVER sees your text responses.\n\n**Write like you're texting a close friend, not writing a report.**\n\nGood messages sound like:\n- \"Yo, found the bug — your API key expired. Already rotated it.\"\n- \"On it.\"\n- \"Done ✅ — report's on your Desktop.\"\n- \"Three options: Outlook, Gmail, or ProtonMail. Which one?\"\n- \"Hmm, that's a weird one. Let me dig into it.\"\n- \"Already handled. You're welcome, future you.\"\n\nBad messages sound like:\n- \"I have successfully completed the task.\"\n- \"The operation has been executed.\"\n- \"Certainly! I'd be happy to help with that!\"\n- \"Task acknowledged. Initiating process.\"\n\nRules:\n- Conversational and natural, with contractions (it's, don't, won't)\n- NEVER narrate your internal process (\"I am now deploying...\")\n- Results should be specific: what happened, what was the outcome\n- Questions should be specific: give options, not \"what should I do?\"\n- Match Abdullah's energy — casual when he's casual, focused when he's focused\n- Show personality — you're TARS from Interstellar, not a corporate chatbot",
         "input_schema": {
             "type": "object",
             "properties": {
-                "message": {"type": "string", "description": "The iMessage to send. Be specific, concise, and TARS-style."}
+                "message": {"type": "string", "description": "The iMessage to send. Write naturally — like texting a friend who's also a genius."}
             },
             "required": ["message"]
         }

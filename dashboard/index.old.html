@@ -1,0 +1,1363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TARS — Dashboard</title>
+    <style>
+        /* ═══════════════════════════════════════════════ */
+        /*              TARS DASHBOARD THEME              */
+        /* ═══════════════════════════════════════════════ */
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-tertiary: #1a2332;
+            --bg-card: #151f2e;
+            --border: #1e3048;
+            --border-bright: #2a4a6b;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-blue: #3b82f6;
+            --accent-cyan: #06b6d4;
+            --accent-green: #10b981;
+            --accent-yellow: #f59e0b;
+            --accent-red: #ef4444;
+            --accent-purple: #8b5cf6;
+            --accent-orange: #f97316;
+            --imsg-blue: #007aff;
+            --imsg-gray: #2a2a2e;
+            --glow-blue: 0 0 20px rgba(59,130,246,0.15);
+            --glow-cyan: 0 0 20px rgba(6,182,212,0.15);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Menlo', monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        /* ─── Scrollbar ─────────────────────────────── */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--accent-blue); }
+
+        /* ─── Header ────────────────────────────────── */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 24px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            height: 56px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .tars-logo {
+            font-size: 22px;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: 4px;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .status-badge.online {
+            background: rgba(16,185,129,0.15);
+            color: var(--accent-green);
+            border: 1px solid rgba(16,185,129,0.3);
+        }
+
+        .status-badge.offline {
+            background: rgba(239,68,68,0.15);
+            color: var(--accent-red);
+            border: 1px solid rgba(239,68,68,0.3);
+        }
+
+        .status-badge.working {
+            background: rgba(245,158,11,0.15);
+            color: var(--accent-yellow);
+            border: 1px solid rgba(245,158,11,0.3);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.online { background: var(--accent-green); }
+        .status-dot.offline { background: var(--accent-red); }
+        .status-dot.working { background: var(--accent-yellow); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 20px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .header-stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .header-stat .value {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* ─── Kill Button ──────────────────────────── */
+        .kill-btn {
+            background: rgba(239,68,68,0.15);
+            color: var(--accent-red);
+            border: 1px solid rgba(239,68,68,0.3);
+            padding: 6px 16px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+
+        .kill-btn:hover {
+            background: rgba(239,68,68,0.3);
+            border-color: var(--accent-red);
+            box-shadow: 0 0 20px rgba(239,68,68,0.2);
+        }
+
+        /* ─── Main Layout ──────────────────────────── */
+        .main {
+            display: grid;
+            grid-template-columns: 300px 1fr 320px;
+            grid-template-rows: 1fr 280px;
+            gap: 1px;
+            height: calc(100vh - 56px);
+            background: var(--border);
+        }
+
+        .panel {
+            background: var(--bg-primary);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 16px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+
+        .panel-header .icon { font-size: 14px; }
+
+        .panel-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+
+        /* ─── Left: Tasks Panel ─────────────────────── */
+        .tasks-panel { grid-row: 1; grid-column: 1; }
+
+        .task-input-wrap {
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .task-input-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .task-input {
+            flex: 1;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 12px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .task-input:focus {
+            border-color: var(--accent-blue);
+            box-shadow: var(--glow-blue);
+        }
+
+        .task-send-btn {
+            background: var(--accent-blue);
+            border: none;
+            color: white;
+            padding: 8px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: 700;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        .task-send-btn:hover {
+            background: #2563eb;
+            box-shadow: var(--glow-blue);
+        }
+
+        .task-item {
+            padding: 10px 12px;
+            border-radius: 8px;
+            margin-bottom: 6px;
+            border-left: 3px solid transparent;
+            transition: all 0.2s;
+            cursor: default;
+        }
+
+        .task-item:hover { background: var(--bg-tertiary); }
+        .task-item.active { border-left-color: var(--accent-yellow); background: rgba(245,158,11,0.05); }
+        .task-item.completed { border-left-color: var(--accent-green); opacity: 0.6; }
+        .task-item.failed { border-left-color: var(--accent-red); }
+
+        .task-item .task-title {
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .task-item .task-meta {
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+
+        /* ─── Center: Thinking Panel ────────────────── */
+        .thinking-panel { grid-row: 1; grid-column: 2; }
+
+        .thinking-stream {
+            padding: 16px;
+        }
+
+        .think-block {
+            margin-bottom: 16px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .think-block .model-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+
+        .model-tag.haiku {
+            background: rgba(139,92,246,0.2);
+            color: var(--accent-purple);
+        }
+
+        .model-tag.sonnet {
+            background: rgba(6,182,212,0.2);
+            color: var(--accent-cyan);
+        }
+
+        .think-text {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .tool-call-block {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin: 8px 0;
+            overflow: hidden;
+        }
+
+        .tool-call-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: var(--bg-secondary);
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--accent-yellow);
+        }
+
+        .tool-call-body {
+            padding: 10px 12px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            max-height: 150px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .tool-result-success { border-left: 3px solid var(--accent-green); }
+        .tool-result-fail { border-left: 3px solid var(--accent-red); }
+
+        /* ─── Right: iMessage Panel ─────────────────── */
+        .imessage-panel { grid-row: 1; grid-column: 3; }
+
+        .imessage-thread {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 12px;
+        }
+
+        .imsg-bubble {
+            max-width: 85%;
+            padding: 8px 12px;
+            border-radius: 16px;
+            font-size: 13px;
+            line-height: 1.4;
+            animation: fadeIn 0.3s ease;
+            word-wrap: break-word;
+        }
+
+        .imsg-bubble.tars {
+            align-self: flex-start;
+            background: var(--imsg-gray);
+            color: var(--text-primary);
+            border-bottom-left-radius: 4px;
+        }
+
+        .imsg-bubble.user {
+            align-self: flex-end;
+            background: var(--imsg-blue);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .imsg-time {
+            font-size: 9px;
+            color: var(--text-muted);
+            margin-top: 2px;
+            padding: 0 4px;
+        }
+
+        .imsg-time.user-time { text-align: right; }
+
+        .imsg-input-wrap {
+            display: flex;
+            gap: 8px;
+            padding: 12px;
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .imsg-input {
+            flex: 1;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 8px 12px;
+            border-radius: 18px;
+            font-family: inherit;
+            font-size: 12px;
+            outline: none;
+        }
+
+        .imsg-input:focus { border-color: var(--accent-blue); }
+
+        .imsg-send-btn {
+            background: var(--imsg-blue);
+            border: none;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* ─── Bottom Left: Action Log ───────────────── */
+        .action-panel { grid-row: 2; grid-column: 1 / 3; }
+
+        .action-table {
+            width: 100%;
+            font-size: 11px;
+        }
+
+        .action-row {
+            display: grid;
+            grid-template-columns: 80px 120px 1fr 60px 60px;
+            padding: 6px 12px;
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+            animation: fadeIn 0.2s ease;
+        }
+
+        .action-row:hover { background: var(--bg-tertiary); }
+
+        .action-row .time { color: var(--text-muted); font-size: 10px; }
+        .action-row .tool { color: var(--accent-yellow); font-weight: 600; }
+        .action-row .detail { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .action-row .status-icon { text-align: center; }
+        .action-row .duration { color: var(--text-muted); text-align: right; font-size: 10px; }
+
+        .action-row-header {
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 9px;
+            position: sticky;
+            top: 0;
+            background: var(--bg-secondary);
+            z-index: 1;
+        }
+
+        /* ─── Bottom Right: Stats / Memory / Controls ── */
+        .stats-panel { grid-row: 2; grid-column: 3; }
+
+        .tab-bar {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 8px 0;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--text-muted);
+            font-size: 10px;
+            font-weight: 700;
+            font-family: inherit;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.2s;
+        }
+
+        .tab-btn.active {
+            color: var(--accent-cyan);
+            border-bottom-color: var(--accent-cyan);
+        }
+
+        .tab-btn:hover { color: var(--text-primary); }
+
+        .tab-content { display: none; padding: 12px; height: 100%; overflow-y: auto; }
+        .tab-content.active { display: block; }
+
+        /* Stats Grid */
+        .stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .stat-card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            text-align: center;
+        }
+
+        .stat-card .stat-value {
+            font-size: 18px;
+            font-weight: 800;
+            color: var(--accent-cyan);
+        }
+
+        .stat-card .stat-label {
+            font-size: 9px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 2px;
+        }
+
+        .stat-card.green .stat-value { color: var(--accent-green); }
+        .stat-card.yellow .stat-value { color: var(--accent-yellow); }
+        .stat-card.red .stat-value { color: var(--accent-red); }
+        .stat-card.purple .stat-value { color: var(--accent-purple); }
+
+        /* Memory Tab */
+        .memory-textarea {
+            width: 100%;
+            height: 100px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 8px;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 11px;
+            resize: vertical;
+            outline: none;
+            margin-bottom: 8px;
+        }
+
+        .memory-textarea:focus { border-color: var(--accent-blue); }
+
+        .memory-label {
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+            margin-top: 8px;
+        }
+
+        .mem-save-btn {
+            background: var(--accent-blue);
+            border: none;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 10px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: 700;
+        }
+
+        /* Controls Tab */
+        .control-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .control-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .control-slider {
+            width: 100px;
+            accent-color: var(--accent-cyan);
+        }
+
+        .control-value {
+            font-size: 11px;
+            color: var(--accent-cyan);
+            font-weight: 700;
+            min-width: 30px;
+            text-align: right;
+        }
+
+        .model-select {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 11px;
+            outline: none;
+        }
+
+        /* ─── Boot Screen ───────────────────────────── */
+        .boot-screen {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: var(--bg-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            transition: opacity 0.5s;
+        }
+
+        .boot-screen.hidden { opacity: 0; pointer-events: none; }
+
+        .boot-ascii {
+            font-size: 14px;
+            color: var(--accent-cyan);
+            text-align: center;
+            white-space: pre;
+            line-height: 1.2;
+            margin-bottom: 20px;
+            animation: bootGlow 2s ease-in-out infinite alternate;
+        }
+
+        @keyframes bootGlow {
+            from { text-shadow: 0 0 10px rgba(6,182,212,0.3); }
+            to { text-shadow: 0 0 30px rgba(6,182,212,0.6); }
+        }
+
+        .boot-status {
+            color: var(--text-muted);
+            font-size: 12px;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+        /* ─── Connection Indicator ──────────────────── */
+        .connection-bar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: var(--accent-red);
+            z-index: 999;
+            display: none;
+        }
+
+        .connection-bar.connected { background: var(--accent-green); display: block; opacity: 0; }
+        .connection-bar.disconnected { display: block; animation: connPulse 1s infinite; }
+
+        @keyframes connPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Connection Indicator -->
+    <div class="connection-bar" id="connectionBar"></div>
+
+    <!-- Boot Screen -->
+    <div class="boot-screen" id="bootScreen">
+        <div class="boot-ascii">
+████████╗ █████╗ ██████╗ ███████╗
+╚══██╔══╝██╔══██╗██╔══██╗██╔════╝
+   ██║   ███████║██████╔╝███████╗
+   ██║   ██╔══██║██╔══██╗╚════██║
+   ██║   ██║  ██║██║  ██║███████║
+   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝</div>
+        <div class="boot-status" id="bootStatus">Connecting to TARS backend...</div>
+    </div>
+
+    <!-- Header -->
+    <div class="header">
+        <div class="header-left">
+            <div class="tars-logo">TARS</div>
+            <div class="status-badge online" id="statusBadge">
+                <div class="status-dot online" id="statusDot"></div>
+                <span id="statusText">ONLINE</span>
+            </div>
+        </div>
+
+        <div class="header-stats">
+            <div class="header-stat">
+                ⏱ Uptime: <span class="value" id="uptimeValue">0:00:00</span>
+            </div>
+            <div class="header-stat">
+                🧠 Model: <span class="value" id="modelValue">—</span>
+            </div>
+            <div class="header-stat">
+                🔧 Actions: <span class="value" id="actionsValue">0</span>
+            </div>
+            <div class="header-stat">
+                💰 Cost: <span class="value" id="costValue">$0.00</span>
+            </div>
+            <div class="header-stat">
+                📊 Tokens: <span class="value" id="tokensValue">0</span>
+            </div>
+        </div>
+
+        <div class="header-right">
+            <button class="kill-btn" id="killBtn" onclick="killTars()">⛔ KILL</button>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="main">
+
+        <!-- Left: Tasks -->
+        <div class="panel tasks-panel">
+            <div class="panel-header">
+                <span><span class="icon">📋</span> Tasks</span>
+                <span id="taskCount">0</span>
+            </div>
+            <div class="task-input-wrap">
+                <div class="task-input-row">
+                    <input type="text" class="task-input" id="taskInput" placeholder="Send a task to TARS..." 
+                           onkeydown="if(event.key==='Enter')sendTask()">
+                    <button class="task-send-btn" onclick="sendTask()">GO</button>
+                </div>
+            </div>
+            <div class="panel-body" id="taskList"></div>
+        </div>
+
+        <!-- Center: Thinking -->
+        <div class="panel thinking-panel">
+            <div class="panel-header">
+                <span><span class="icon">🧠</span> Thinking</span>
+                <span id="thinkingModel">—</span>
+            </div>
+            <div class="panel-body" id="thinkingStream">
+                <div style="color: var(--text-muted); text-align: center; margin-top: 40px;">
+                    Waiting for TARS to start thinking...
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: iMessage -->
+        <div class="panel imessage-panel">
+            <div class="panel-header">
+                <span><span class="icon">💬</span> iMessage</span>
+                <span id="msgCount">0</span>
+            </div>
+            <div class="panel-body" id="imessageThread">
+                <div class="imessage-thread" id="imessageMessages"></div>
+            </div>
+            <div class="imsg-input-wrap">
+                <input type="text" class="imsg-input" id="imsgInput" placeholder="Message TARS..."
+                       onkeydown="if(event.key==='Enter')sendDashboardMsg()">
+                <button class="imsg-send-btn" onclick="sendDashboardMsg()">▶</button>
+            </div>
+        </div>
+
+        <!-- Bottom Left: Action Log -->
+        <div class="panel action-panel">
+            <div class="panel-header">
+                <span><span class="icon">⚡</span> Action Log</span>
+                <span id="actionCount">0</span>
+            </div>
+            <div class="panel-body" id="actionLog">
+                <div class="action-row action-row-header">
+                    <div class="time">TIME</div>
+                    <div class="tool">TOOL</div>
+                    <div class="detail">DETAILS</div>
+                    <div class="status-icon">STATUS</div>
+                    <div class="duration">DURATION</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Right: Stats/Memory/Controls -->
+        <div class="panel stats-panel">
+            <div class="tab-bar">
+                <button class="tab-btn active" onclick="switchTab('stats')">📊 Stats</button>
+                <button class="tab-btn" onclick="switchTab('memory')">🧠 Memory</button>
+                <button class="tab-btn" onclick="switchTab('controls')">🎮 Controls</button>
+            </div>
+
+            <!-- Stats Tab -->
+            <div class="tab-content active" id="tab-stats">
+                <div class="stat-grid">
+                    <div class="stat-card green">
+                        <div class="stat-value" id="statSuccess">0</div>
+                        <div class="stat-label">Success</div>
+                    </div>
+                    <div class="stat-card red">
+                        <div class="stat-value" id="statFailed">0</div>
+                        <div class="stat-label">Failed</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statTokensIn">0</div>
+                        <div class="stat-label">Tokens In</div>
+                    </div>
+                    <div class="stat-card purple">
+                        <div class="stat-value" id="statTokensOut">0</div>
+                        <div class="stat-label">Tokens Out</div>
+                    </div>
+                    <div class="stat-card yellow">
+                        <div class="stat-value" id="statCost">$0.00</div>
+                        <div class="stat-label">Est. Cost</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statEvents">0</div>
+                        <div class="stat-label">Events</div>
+                    </div>
+                </div>
+                <div class="memory-label" style="margin-top:12px">Tool Usage</div>
+                <div id="toolUsageChart" style="font-size:11px; color: var(--text-secondary);"></div>
+            </div>
+
+            <!-- Memory Tab -->
+            <div class="tab-content" id="tab-memory">
+                <div class="memory-label">Current Context</div>
+                <textarea class="memory-textarea" id="memContext" rows="4"></textarea>
+                <div class="memory-label">Preferences</div>
+                <textarea class="memory-textarea" id="memPreferences" rows="4"></textarea>
+                <div style="display:flex; gap:8px; margin-top:4px;">
+                    <button class="mem-save-btn" onclick="saveMemory('context')">Save Context</button>
+                    <button class="mem-save-btn" onclick="saveMemory('preferences')">Save Prefs</button>
+                    <button class="mem-save-btn" onclick="requestMemory()" style="background:var(--accent-purple)">Refresh</button>
+                </div>
+            </div>
+
+            <!-- Controls Tab -->
+            <div class="tab-content" id="tab-controls">
+                <div class="control-row">
+                    <span class="control-label">Humor Level</span>
+                    <input type="range" class="control-slider" id="humorSlider" min="0" max="100" value="75"
+                           oninput="updateControl('agent.humor_level', this.value)">
+                    <span class="control-value" id="humorValue">75%</span>
+                </div>
+                <div class="control-row">
+                    <span class="control-label">Force Model</span>
+                    <select class="model-select" id="modelSelect">
+                        <option value="auto">Auto (Hybrid)</option>
+                        <option value="haiku">⚡ Haiku (Fast)</option>
+                        <option value="sonnet">🧠 Sonnet (Smart)</option>
+                    </select>
+                </div>
+                <div class="control-row">
+                    <span class="control-label">Confirm Destructive</span>
+                    <input type="checkbox" id="confirmDestructive" checked
+                           onchange="updateControl('safety.confirm_destructive', this.checked)">
+                </div>
+                <div class="control-row">
+                    <span class="control-label">iMsg Rate Limit</span>
+                    <input type="range" class="control-slider" id="rateLimitSlider" min="5" max="120" value="30"
+                           oninput="updateControl('imessage.rate_limit', parseInt(this.value)); document.getElementById('rateLimitValue').textContent=this.value+'s'">
+                    <span class="control-value" id="rateLimitValue">30s</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- JavaScript -->
+    <script>
+        // ═══════════════════════════════════════════════
+        //            TARS DASHBOARD - CLIENT
+        // ═══════════════════════════════════════════════
+
+        const WS_URL = `ws://${location.hostname}:8421`;
+        let ws = null;
+        let connected = false;
+        let taskCounter = 0;
+        let actionCounter = 0;
+        let msgCounter = 0;
+        let firstThinking = true;
+        let startTime = Date.now();
+
+        // ─── WebSocket Connection ────────────────────
+        function connect() {
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                connected = true;
+                updateConnectionUI(true);
+                hideBoot();
+                // Request initial data
+                ws.send(JSON.stringify({ type: 'get_stats' }));
+                ws.send(JSON.stringify({ type: 'get_memory' }));
+            };
+
+            ws.onclose = () => {
+                connected = false;
+                updateConnectionUI(false);
+                setTimeout(connect, 3000); // Reconnect
+            };
+
+            ws.onerror = () => {
+                connected = false;
+                updateConnectionUI(false);
+            };
+
+            ws.onmessage = (e) => {
+                const event = JSON.parse(e.data);
+                handleEvent(event);
+            };
+        }
+
+        function updateConnectionUI(isConnected) {
+            const bar = document.getElementById('connectionBar');
+            const badge = document.getElementById('statusBadge');
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+
+            if (isConnected) {
+                bar.className = 'connection-bar connected';
+                badge.className = 'status-badge online';
+                dot.className = 'status-dot online';
+                text.textContent = 'ONLINE';
+            } else {
+                bar.className = 'connection-bar disconnected';
+                badge.className = 'status-badge offline';
+                dot.className = 'status-dot offline';
+                text.textContent = 'OFFLINE';
+            }
+        }
+
+        function hideBoot() {
+            const boot = document.getElementById('bootScreen');
+            document.getElementById('bootStatus').textContent = 'TARS Systems Online ✓';
+            setTimeout(() => boot.classList.add('hidden'), 800);
+            setTimeout(() => boot.style.display = 'none', 1300);
+        }
+
+        // ─── Event Handler ───────────────────────────
+        function handleEvent(event) {
+            const { type, data, timestamp } = event;
+            const time = new Date(timestamp).toLocaleTimeString();
+
+            switch (type) {
+                case 'task_received':
+                    addTask(data.task, time, data.source || 'imessage');
+                    setStatus('working', 'WORKING');
+                    break;
+
+                case 'task_completed':
+                    completeCurrentTask();
+                    setStatus('online', 'ONLINE');
+                    break;
+
+                case 'thinking':
+                    addThinking(data.text, data.model || '');
+                    break;
+
+                case 'thinking_start':
+                    startThinkingBlock(data.model || 'unknown');
+                    break;
+
+                case 'tool_called':
+                    addToolCall(data.tool_name, data.tool_input, time);
+                    break;
+
+                case 'tool_result':
+                    addToolResult(data.tool_name, data.content, data.success, data.duration, time);
+                    break;
+
+                case 'imessage_sent':
+                    addIMsgBubble(data.message, 'tars', time);
+                    break;
+
+                case 'imessage_received':
+                    addIMsgBubble(data.message, 'user', time);
+                    break;
+
+                case 'api_call':
+                    updateModelDisplay(data.model);
+                    break;
+
+                case 'status_change':
+                    setStatus(data.status, data.label || data.status.toUpperCase());
+                    break;
+
+                case 'error':
+                    addThinkingError(data.message || data.error || 'Unknown error');
+                    break;
+
+                case 'stats':
+                    updateStats(data);
+                    break;
+
+                case 'memory_data':
+                    document.getElementById('memContext').value = data.context || '';
+                    document.getElementById('memPreferences').value = data.preferences || '';
+                    break;
+
+                case 'memory_saved':
+                    // Flash confirmation
+                    break;
+
+                case 'kill_switch':
+                    setStatus('offline', 'KILLED');
+                    addThinkingError('🛑 KILL SWITCH ACTIVATED');
+                    break;
+
+                case 'config_updated':
+                    break;
+            }
+        }
+
+        // ─── Tasks ───────────────────────────────────
+        function addTask(text, time, source) {
+            taskCounter++;
+            document.getElementById('taskCount').textContent = taskCounter;
+
+            // Deactivate previous active task
+            document.querySelectorAll('.task-item.active').forEach(el => {
+                el.classList.remove('active');
+                el.classList.add('completed');
+            });
+
+            const div = document.createElement('div');
+            div.className = 'task-item active';
+            div.id = `task-${taskCounter}`;
+            div.innerHTML = `
+                <div class="task-title">${escapeHtml(text)}</div>
+                <div class="task-meta">${time} · via ${source} · #${taskCounter}</div>
+            `;
+
+            const list = document.getElementById('taskList');
+            list.prepend(div);
+        }
+
+        function completeCurrentTask() {
+            document.querySelectorAll('.task-item.active').forEach(el => {
+                el.classList.remove('active');
+                el.classList.add('completed');
+                el.querySelector('.task-meta').textContent += ' · ✅ done';
+            });
+        }
+
+        function sendTask() {
+            const input = document.getElementById('taskInput');
+            const task = input.value.trim();
+            if (!task || !connected) return;
+
+            ws.send(JSON.stringify({ type: 'send_task', task }));
+            input.value = '';
+        }
+
+        // ─── Thinking Stream ─────────────────────────
+        function startThinkingBlock(model) {
+            if (firstThinking) {
+                document.getElementById('thinkingStream').innerHTML = '';
+                firstThinking = false;
+            }
+
+            const tag = model.includes('haiku') ? 'haiku' : 'sonnet';
+            const label = model.includes('haiku') ? '⚡ HAIKU' : '🧠 SONNET';
+
+            const block = document.createElement('div');
+            block.className = 'think-block';
+            block.id = 'current-think-block';
+            block.innerHTML = `
+                <div class="model-tag ${tag}">${label}</div>
+                <div class="think-text" id="current-think-text"></div>
+            `;
+
+            document.getElementById('thinkingStream').appendChild(block);
+            document.getElementById('thinkingModel').textContent = label;
+            scrollBottom('thinkingStream');
+        }
+
+        function addThinking(text, model) {
+            if (firstThinking) {
+                startThinkingBlock(model);
+            }
+
+            let el = document.getElementById('current-think-text');
+            if (!el) {
+                startThinkingBlock(model);
+                el = document.getElementById('current-think-text');
+            }
+            el.textContent += text;
+            scrollBottom('thinkingStream');
+        }
+
+        function addToolCall(toolName, toolInput, time) {
+            const stream = document.getElementById('thinkingStream');
+            const div = document.createElement('div');
+            div.className = 'tool-call-block';
+            div.id = `tool-${Date.now()}`;
+            div.innerHTML = `
+                <div class="tool-call-header">🔧 ${toolName} <span style="color:var(--text-muted);font-weight:400;margin-left:auto;">${time}</span></div>
+                <div class="tool-call-body">${escapeHtml(JSON.stringify(toolInput, null, 2))}</div>
+            `;
+            stream.appendChild(div);
+            scrollBottom('thinkingStream');
+
+            // Remove old current think block id
+            const old = document.getElementById('current-think-block');
+            if (old) old.removeAttribute('id');
+            const oldText = document.getElementById('current-think-text');
+            if (oldText) oldText.removeAttribute('id');
+        }
+
+        function addToolResult(toolName, content, success, duration, time) {
+            const stream = document.getElementById('thinkingStream');
+            const div = document.createElement('div');
+            div.className = `tool-call-block ${success ? 'tool-result-success' : 'tool-result-fail'}`;
+            const icon = success ? '✅' : '❌';
+            const dur = duration ? `${duration.toFixed(1)}s` : '';
+            div.innerHTML = `
+                <div class="tool-call-header">${icon} Result: ${toolName} <span style="color:var(--text-muted);font-weight:400;margin-left:auto;">${dur}</span></div>
+                <div class="tool-call-body">${escapeHtml(String(content).substring(0, 500))}</div>
+            `;
+            stream.appendChild(div);
+            scrollBottom('thinkingStream');
+        }
+
+        function addThinkingError(msg) {
+            const stream = document.getElementById('thinkingStream');
+            const div = document.createElement('div');
+            div.className = 'think-block';
+            div.innerHTML = `<div class="think-text" style="color:var(--accent-red);">❌ ${escapeHtml(msg)}</div>`;
+            stream.appendChild(div);
+            scrollBottom('thinkingStream');
+        }
+
+        // ─── iMessage Panel ──────────────────────────
+        function addIMsgBubble(text, sender, time) {
+            msgCounter++;
+            document.getElementById('msgCount').textContent = msgCounter;
+
+            const thread = document.getElementById('imessageMessages');
+
+            const bubble = document.createElement('div');
+            bubble.className = `imsg-bubble ${sender}`;
+            bubble.textContent = text;
+            thread.appendChild(bubble);
+
+            const timeEl = document.createElement('div');
+            timeEl.className = `imsg-time ${sender === 'user' ? 'user-time' : ''}`;
+            timeEl.textContent = time;
+            thread.appendChild(timeEl);
+
+            scrollBottom('imessageThread');
+        }
+
+        function sendDashboardMsg() {
+            const input = document.getElementById('imsgInput');
+            const msg = input.value.trim();
+            if (!msg || !connected) return;
+
+            ws.send(JSON.stringify({ type: 'send_task', task: msg }));
+            addIMsgBubble(msg, 'user', new Date().toLocaleTimeString());
+            input.value = '';
+        }
+
+        // ─── Action Log ──────────────────────────────
+        function addActionRow(toolName, detail, success, duration, time) {
+            actionCounter++;
+            document.getElementById('actionCount').textContent = actionCounter;
+            document.getElementById('actionsValue').textContent = actionCounter;
+
+            const log = document.getElementById('actionLog');
+            const row = document.createElement('div');
+            row.className = 'action-row';
+            const icon = success ? '✅' : '❌';
+            const dur = duration ? `${duration.toFixed(1)}s` : '—';
+            row.innerHTML = `
+                <div class="time">${time}</div>
+                <div class="tool">${toolName}</div>
+                <div class="detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>
+                <div class="status-icon">${icon}</div>
+                <div class="duration">${dur}</div>
+            `;
+            log.appendChild(row);
+            scrollBottom('actionLog');
+        }
+
+        // Hook tool results into action log
+        const origHandleEvent = handleEvent;
+        // We'll handle action log in the main handler instead
+
+        // ─── Stats ───────────────────────────────────
+        function updateStats(data) {
+            document.getElementById('statSuccess').textContent = data.actions_success || 0;
+            document.getElementById('statFailed').textContent = data.actions_failed || 0;
+            document.getElementById('statTokensIn').textContent = formatNumber(data.total_tokens_in || 0);
+            document.getElementById('statTokensOut').textContent = formatNumber(data.total_tokens_out || 0);
+            document.getElementById('statCost').textContent = `$${(data.total_cost || 0).toFixed(3)}`;
+            document.getElementById('statEvents').textContent = data.total_events || 0;
+
+            document.getElementById('costValue').textContent = `$${(data.total_cost || 0).toFixed(3)}`;
+            document.getElementById('tokensValue').textContent = formatNumber((data.total_tokens_in || 0) + (data.total_tokens_out || 0));
+
+            // Tool usage chart
+            const toolDiv = document.getElementById('toolUsageChart');
+            const tools = data.tool_usage || {};
+            const sorted = Object.entries(tools).sort((a, b) => b[1] - a[1]);
+            toolDiv.innerHTML = sorted.map(([name, count]) => {
+                const pct = Math.min(100, (count / Math.max(1, actionCounter)) * 100);
+                return `<div style="margin:4px 0;">
+                    <span style="color:var(--accent-yellow)">${name}</span>
+                    <span style="float:right">${count}</span>
+                    <div style="height:3px;background:var(--border);border-radius:2px;margin-top:2px;">
+                        <div style="height:100%;width:${pct}%;background:var(--accent-cyan);border-radius:2px;"></div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // ─── Controls ────────────────────────────────
+        function updateControl(key, value) {
+            if (connected) {
+                ws.send(JSON.stringify({ type: 'update_config', key, value }));
+            }
+            if (key === 'agent.humor_level') {
+                document.getElementById('humorValue').textContent = value + '%';
+            }
+        }
+
+        function killTars() {
+            if (confirm('⛔ Are you sure you want to KILL TARS?')) {
+                if (connected) {
+                    ws.send(JSON.stringify({ type: 'kill' }));
+                }
+                setStatus('offline', 'KILLED');
+            }
+        }
+
+        // ─── Tabs ────────────────────────────────────
+        function switchTab(name) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.getElementById(`tab-${name}`).classList.add('active');
+            event.target.classList.add('active');
+
+            if (name === 'memory') requestMemory();
+            if (name === 'stats' && connected) {
+                ws.send(JSON.stringify({ type: 'get_stats' }));
+            }
+        }
+
+        function requestMemory() {
+            if (connected) {
+                ws.send(JSON.stringify({ type: 'get_memory' }));
+            }
+        }
+
+        function saveMemory(field) {
+            const content = document.getElementById(field === 'context' ? 'memContext' : 'memPreferences').value;
+            if (connected) {
+                ws.send(JSON.stringify({ type: 'save_memory', field, content }));
+            }
+        }
+
+        // ─── Status ──────────────────────────────────
+        function setStatus(status, label) {
+            const badge = document.getElementById('statusBadge');
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            badge.className = `status-badge ${status}`;
+            dot.className = `status-dot ${status}`;
+            text.textContent = label;
+        }
+
+        function updateModelDisplay(model) {
+            const tag = model.includes('haiku') ? '⚡ Haiku' : '🧠 Sonnet';
+            document.getElementById('modelValue').textContent = tag;
+        }
+
+        // ─── Utilities ──────────────────────────────
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function scrollBottom(id) {
+            const el = document.getElementById(id);
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function formatNumber(n) {
+            if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+            if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+            return String(n);
+        }
+
+        // ─── Uptime Counter ──────────────────────────
+        setInterval(() => {
+            if (!connected) return;
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const h = Math.floor(elapsed / 3600);
+            const m = Math.floor((elapsed % 3600) / 60);
+            const s = elapsed % 60;
+            document.getElementById('uptimeValue').textContent =
+                `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+
+            // Refresh stats every 5s
+            if (elapsed % 5 === 0) {
+                ws.send(JSON.stringify({ type: 'get_stats' }));
+            }
+        }, 1000);
+
+        // ─── Patch handleEvent for action log ────────
+        const _origHandler = handleEvent;
+        window.handleEvent = function(event) {
+            _origHandler(event);
+            const { type, data, timestamp } = event;
+            const time = new Date(timestamp).toLocaleTimeString();
+
+            if (type === 'tool_result') {
+                addActionRow(
+                    data.tool_name || '—',
+                    String(data.content || '').substring(0, 100),
+                    data.success,
+                    data.duration,
+                    time
+                );
+            }
+        };
+
+        // Override ws.onmessage to use patched handler
+        const origConnect = connect;
+        connect = function() {
+            origConnect();
+            // Re-patch after reconnect
+            const origOnMessage = ws.onmessage;
+            ws.onmessage = (e) => {
+                const event = JSON.parse(e.data);
+                window.handleEvent(event);
+            };
+        };
+
+        // ─── Start ──────────────────────────────────
+        connect();
+    </script>
+</body>
+</html>

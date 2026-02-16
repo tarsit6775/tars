@@ -1,0 +1,7 @@
+# Relay static files (built dashboard)
+relay/static/
+
+# Don't ignore the relay server itself
+!relay/server.py
+!relay/requirements.txt
+!relay/Dockerfile

@@ -1,0 +1,12 @@
+node_modules
+dashboard/node_modules
+dashboard/src
+dashboard/.vite
+logs
+memory/history.jsonl
+__pycache__
+*.pyc
+.git
+.env
+venv
+.venv

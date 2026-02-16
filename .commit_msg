@@ -1,0 +1,13 @@
+Brain v4: Phases 1-6 — The Brain That Thinks
+
+Phase 1: Message Stream Parser - 3s merge window for back-to-back messages
+Phase 2: Intent Classifier - zero LLM tokens, 7 types, domain detection
+Phase 3: Conversation Threading - persistent threads, decision journal
+Phase 4: Brain/Hands Separation - process() entry, extracted helpers
+Phase 5: Modular System Prompt - domain injection, escalation protocol
+Phase 6: web_search tool, deploy_dev_agent v2, tars.py wiring
+
+New files: brain/message_parser.py, brain/intent.py, brain/threads.py
+Rewritten: brain/planner.py, brain/prompts.py
+Updated: brain/tools.py, tars.py
+Tests: test_brain_v4.py — all phases pass

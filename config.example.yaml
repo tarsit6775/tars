@@ -1,0 +1,49 @@
+# ╔══════════════════════════════════════════╗
+# ║     TARS Configuration — TEMPLATE       ║
+# ╚══════════════════════════════════════════╝
+# Copy this file to config.yaml and fill in your keys:
+#   cp config.example.yaml config.yaml
+
+# LLM Provider — "groq", "together", "anthropic", "openrouter", "openai"
+llm:
+  provider: "groq"
+  api_key: "YOUR_API_KEY_HERE"
+  heavy_model: "llama-3.3-70b-versatile"
+  fast_model: "llama-3.3-70b-versatile"
+  # base_url: ""
+
+# iMessage
+imessage:
+  owner_phone: "+1XXXXXXXXXX"
+  poll_interval: 2
+  rate_limit: 30
+  max_message_length: 1600
+
+# Safety
+safety:
+  kill_words: ["STOP", "TARS STOP", "HALT", "KILL"]
+  confirm_destructive: true
+  max_retries: 3
+  allowed_paths: []
+
+# Memory
+memory:
+  context_file: "memory/context.md"
+  preferences_file: "memory/preferences.md"
+  history_file: "memory/history.jsonl"
+  projects_dir: "memory/projects"
+  max_history_context: 50
+
+# Agent
+agent:
+  name: "TARS"
+  humor_level: 75
+  auto_start: false
+  log_level: "INFO"
+  log_file: "logs/tars.log"
+
+# Cloud Relay (Railway deployment)
+relay:
+  url: ""                      # wss://your-app.railway.app/tunnel
+  token: "change-me"           # Shared secret for tunnel auth
+  passphrase: "change-me"     # Dashboard login passphrase

@@ -1,0 +1,15 @@
+anthropic>=0.79.0
+openai>=1.12.0
+groq>=0.4.0
+pyyaml>=6.0
+websocket-client>=1.6.0
+websockets>=12.0
+
+# Report Generation (Excel + PDF)
+openpyxl>=3.1.0
+reportlab>=4.0
+
+# macOS Automation (Vision/OCR, Accessibility, Quartz/CGEvent)
+pyobjc-framework-Vision>=12.0
+pyobjc-framework-Quartz>=12.0
+pyobjc-framework-ApplicationServices>=12.0

@@ -1,0 +1,46 @@
+# ── Python ──────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+venv/
+.venv/
+.env
+
+# ── Node / Dashboard ───────────────────────
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.vite/
+
+# ── Secrets & Local Config ─────────────────
+config.yaml
+
+# ── Runtime Data ───────────────────────────
+logs/*.log
+memory/history.jsonl
+memory/context.md
+memory/preferences.md
+memory/projects/*
+!memory/projects/.gitkeep
+
+# ── Relay build artifact (committed by CI) ──
+# relay/static/ is committed by GitHub Actions after build
+
+# ── OS / IDE ───────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── TARS Control App Build ─────────────────
+app/build/
+app/dist/
+app/icon.iconset/
+app/icon.png
+app/icon.icns

@@ -1,0 +1,30 @@
+{
+  "success_patterns": [
+    {
+      "task": "Use macOS automation to send an email to tarsitgroup@outlook.com from the logged-in email account with the subject 'Cheapest flights from SLC to Dallas' and the body 'The cheapest one-way flights from",
+      "summary": "Sent an email to tarsitgroup@outlook.com from the logged-in email account with the subject 'Cheapest flights from SLC to Dallas' and the body 'The cheapest one-way flights from SLC to Dallas this month are available for as low as $74-$110 on budget carriers like Southwest, Frontier, and American Air",
+      "steps": 2,
+      "timestamp": "2026-02-15T15:37:58.996205"
+    },
+    {
+      "task": "Use macOS automation to send an email to tarsitgroup@outlook.com from the logged-in email account with the subject 'Full Detailed Report: Cheap Flights from SLC to Dallas in February' and the body 'Pl",
+      "summary": "Opened Mail app, attempted to construct email with AppleScript, then sent email with shell command.",
+      "steps": 7,
+      "timestamp": "2026-02-15T15:46:18.256318"
+    }
+  ],
+  "failure_patterns": [
+    {
+      "task": "Use macOS automation to open the Mail app, go to the 'Sent' folder, and check if the email with the subject 'Full Detailed Report: Cheap Flights from SLC to Dallas in February' is present in the sent ",
+      "reason": "I tried using AppleScript to open the Mail app, go to the 'Sent' folder, and check if the email with the subject 'Full Detailed Report: Cheap Flights from SLC to Dallas in February' is present in the sent emails, but the script ran into errors. I attempted to use different approaches, including usin",
+      "steps": 4,
+      "timestamp": "2026-02-15T15:49:43.141903"
+    }
+  ],
+  "stats": {
+    "total_tasks": 3,
+    "successes": 2,
+    "failures": 1,
+    "total_steps": 13
+  }
+}

@@ -1,0 +1,201 @@
+
+[36m
+  ████████╗ █████╗ ██████╗ ███████╗
+  ╚══██╔══╝██╔══██╗██╔══██╗██╔════╝
+     ██║   ███████║██████╔╝███████╗
+     ██║   ██╔══██║██╔══██╗╚════██║
+     ██║   ██║  ██║██║  ██║███████║
+     ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝
+[0m
+  [90mAutonomous Mac Agent — v3.0 Multi-Agent[0m
+  [90m"Humor: 75% — Honesty: 90%"[0m
+  [90mDashboard: http://localhost:8420[0m
+
+  ⚙️  Config loaded
+  🧠 Brain LLM: gemini/gemini-2.5-flash
+  🤖 Agent LLM: groq
+  📝 Logger ready
+  🧠 Memory loaded
+  🧬 Agent memory loaded
+  📱 iMessage bridge ready
+  🤖 Agents: groq/llama-3.3-70b-versatile
+  🔧 Orchestrator executor ready
+     ├─ 🌐 Browser Agent
+     ├─ 💻 Coder Agent
+     ├─ ⚙️  System Agent
+     ├─ 🔍 Research Agent
+     └─ 📁 File Agent
+  🧠 Brain: gemini/gemini-2.5-flash
+  🔄 Fallback: groq/llama-3.3-70b-versatile
+  🤖 Orchestrator brain online
+  📊 Agent monitor active
+  🖥️  Dashboard live at [36mhttp://localhost:8420[0m
+
+  ──────────────────────────────────────────────────
+  🟢 TARS is online — 2026-02-15 23:30:59
+  ──────────────────────────────────────────────────
+
+  🌍 Taking environment snapshot...
+  ✅ Snapshot: 14 apps running, volume 75%
+    ⏰ Price tracker scheduler started (every 30min)
+  ✈️  Flight price tracker scheduler started (every 30min)
+  🌐 Open dashboard: http://localhost:8420
+
+  📱 Startup notification sent via iMessage
+  📱 Listening for messages...
+
+  ⏳ Waiting for message... (conversation: 0 msgs, 0 ctx entries)
+  📱 Waiting for iMessage reply (timeout: 3600s)...
+
+
+  🛑 TARS shutting down...
+
+No tasks completed this session.
+
+
+[36m
+  ████████╗ █████╗ ██████╗ ███████╗
+  ╚══██╔══╝██╔══██╗██╔══██╗██╔════╝
+     ██║   ███████║██████╔╝███████╗
+     ██║   ██╔══██║██╔══██╗╚════██║
+     ██║   ██║  ██║██║  ██║███████║
+     ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝
+[0m
+  [90mAutonomous Mac Agent — v3.0 Multi-Agent[0m
+  [90m"Humor: 75% — Honesty: 90%"[0m
+  [90mDashboard: http://localhost:8420[0m
+
+  ⚙️  Config loaded
+  🧠 Brain LLM: gemini/gemini-2.5-flash
+  🤖 Agent LLM: groq
+  📝 Logger ready
+  🧠 Memory loaded
+  🧬 Agent memory loaded
+  📱 iMessage bridge ready
+  🤖 Agents: groq/llama-3.3-70b-versatile
+  🔧 Orchestrator executor ready
+     ├─ 🌐 Browser Agent
+     ├─ 💻 Coder Agent
+     ├─ ⚙️  System Agent
+     ├─ 🔍 Research Agent
+     └─ 📁 File Agent
+  🧠 Brain: gemini/gemini-2.5-flash
+  🔄 Fallback: groq/llama-3.3-70b-versatile
+  🤖 Orchestrator brain online
+  📊 Agent monitor active
+  🖥️  Dashboard live at [36mhttp://localhost:8420[0m
+
+  ──────────────────────────────────────────────────
+  🟢 TARS is online — 2026-02-15 23:31:33
+  ──────────────────────────────────────────────────
+
+  🌍 Taking environment snapshot...
+  ✅ Snapshot: 14 apps running, volume 75%
+    ⏰ Price tracker scheduler started (every 30min)  ✈️  Flight price tracker scheduler started (every 30min)
+
+  🌐 Open dashboard: http://localhost:8420
+
+  📱 Startup notification sent via iMessage
+  📱 Listening for messages...
+
+  ⏳ Waiting for message... (conversation: 0 msgs, 0 ctx entries)
+  📱 Waiting for iMessage reply (timeout: 3600s)...
+  📱 Received reply (1 msg(s)): search flights from slc to Lahore Pakistan within the next 6 months. Cheapest. e...
+  ⏳ Waiting for message... (conversation: 0 msgs, 0 ctx entries)
+  ══════════════════════════════════════════════════
+
+  📨 Message: search flights from slc to Lahore Pakistan within the next 6 months. Cheapest. email the report to tarsitgroup@outlook.com, and also track that route - alert me if price drops below the average rate  📱 Waiting for iMessage reply (timeout: 3600s)...
+
+  ══════════════════════════════════════════════════
+
+  New message: search flights from slc to Lahore Pakistan within the next 6 months. Cheapest. email the report to tarsitgroup@outlook.com, and also track that route - alert me if price drops below the average rate
+  🔧 Executing: find_cheapest_dates({})
+  🔧 find_cheapest_dates → {}
+    ❌ Cheapest dates error: 'origin'
+  🔧 Executing: find_cheapest_dates({'destination': 'LHE', 'trip_type': 'one_way', 'origin': 'SLC', 'email_to': 'tarsitgroup@outlook.com', 'end_date': 'August 15, 2026', 'start_date': 'today'})
+  🔧 find_cheapest_dates → {'destination': 'LHE', 'trip_type': 'one_way', 'origin': 'SLC', 'email_to': 'tarsitgroup@outlook.com', 'end_date': 'Augu
+    ✈️ Scanning 20 dates (parallel): SLC→LHE (Feb 15 – Aug 15, 2026)
+      📅 2026-02-25: $51 (?)
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+      📅 2026-02-15: $878 (Alaska)
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+      📅 2026-03-07: $878 (Alaska)
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+      📅 2026-03-17: $719 (?)
+      📅 2026-03-27: $719 (?)
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+      📅 2026-04-06: $599 (American)
+      📅 2026-04-16: $599 (American)
+      📅 2026-04-26: $740 (American)
+      📅 2026-05-06: $740 (American)
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+      📅 2026-05-16: $1,035 (American)
+      📅 2026-05-26: $1,035 (American)
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+      📅 2026-06-05: $1,197 (Alaska)
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+      📅 2026-06-15: $1,197 (Alaska)
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+      📅 2026-06-25: $895 (American)
+      📅 2026-07-05: $895 (American)
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+      📅 2026-07-15: $780 (American)
+      📅 2026-07-25: $780 (American)
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+      📅 2026-08-04: $758 (American)
+      📅 2026-08-14: $758 (American)
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+    ⚠️ Broken link for Alaska: https://www.alaskaair.com/shopping/flights?A=1&prior=form&Sh... → using Google Flights
+      📅 2026-08-15: $701 (American)
+    ✅ ✈️ **Cheapest Dates: SLC → LHE**
+📅 Range: Feb 15 – Aug 15, 2026
+Scanned 20 dates
+
+Date           Day        Price      A
+  🔧 Executing: track_flight_price({})
+  🔧 track_flight_price → {}
+    ❌ Price tracker error: 'origin'
+  🔧 Executing: track_flight_price({'origin': 'SLC', 'destination': 'LHE', 'depart_date': 'February 25, 2026', 'target_price': 599, 'email_to': 'tarsitgroup@outlook.com', 'trip_type': 'one_way'})
+  🔧 track_flight_price → {'origin': 'SLC', 'destination': 'LHE', 'depart_date': 'February 25, 2026', 'target_price': 599, 'email_to': 'tarsitgrou
+    🎯 Setting up tracker: SLC→LHE on 2026-02-25, target $599
+    ⚡ Cache hit for SLC→LHE
+    ✅ 🎯 Tracker set: SLC→LHE on 2026-02-25
+🔔 **ALERT: Already at target!** Current $51 ≤ target $599
+📧 Alert email sent immedi
+  Cycle complete. Response: I've set up a price tracker for SLC to Lahore. Interestingly, the system is reporting a $51 flight for Feb 25th as already at the target price of $599, and has sent an alert. I suspect that $51 price 
+
+  ──────────────────────────────────────────────────
+  ✅ Cycle complete
+  ──────────────────────────────────────────────────
+

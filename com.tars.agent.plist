@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+╔══════════════════════════════════════════════════════════════╗
+║      TARS — macOS Watchdog (launchd)                         ║
+╠══════════════════════════════════════════════════════════════╣
+║  Auto-restarts TARS if it crashes. Starts on login.          ║
+║                                                              ║
+║  Install:                                                    ║
+║    cp com.tars.agent.plist ~/Library/LaunchAgents/            ║
+║    launchctl load ~/Library/LaunchAgents/com.tars.agent.plist ║
+║                                                              ║
+║  Uninstall:                                                  ║
+║    launchctl unload ~/Library/LaunchAgents/com.tars.agent.plist║
+║    rm ~/Library/LaunchAgents/com.tars.agent.plist             ║
+║                                                              ║
+║  Check status:                                               ║
+║    launchctl list | grep tars                                ║
+║                                                              ║
+║  NOTE: Update WorkingDirectory and ProgramArguments           ║
+║  paths if you move the tars directory.                        ║
+╚══════════════════════════════════════════════════════════════╝
+-->
+<plist version="1.0">
+<dict>
+    <!-- Unique identifier -->
+    <key>Label</key>
+    <string>com.tars.agent</string>
+
+    <!-- Python executable + script -->
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Use the venv python so all deps are available -->
+        <string>/Users/abdullah/Desktop/untitled folder/tars/venv/bin/python</string>
+        <string>/Users/abdullah/Desktop/untitled folder/tars/tars.py</string>
+    </array>
+
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>/Users/abdullah/Desktop/untitled folder/tars</string>
+
+    <!-- Auto-restart on crash -->
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Restart if exits with non-zero (crash) -->
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Start on user login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Throttle: wait 10s before restarting after crash -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Log stdout and stderr -->
+    <key>StandardOutPath</key>
+    <string>/Users/abdullah/Desktop/untitled folder/tars/logs/tars-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/abdullah/Desktop/untitled folder/tars/logs/tars-launchd-err.log</string>
+
+    <!-- Environment variables (API keys — uncomment and fill if not in config.yaml) -->
+    <!--
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TARS_BRAIN_API_KEY</key>
+        <string>YOUR_GEMINI_KEY</string>
+        <key>TARS_AGENT_API_KEY</key>
+        <string>YOUR_GROQ_KEY</string>
+    </dict>
+    -->
+
+    <!-- Process limits -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+</dict>
+</plist>

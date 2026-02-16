@@ -520,18 +520,20 @@ class TARSTunnel:
                         # If TARS is running, forward to local WS
                         if self.process_mgr.is_running:
                             await self._forward_to_local(message)
-                            event_bus.emit("task_received", {"task": task, "source": "dashboard"})
+                            # Don't emit task_received here — TARS's server.py
+                            # already emits it and the listener forwards it.
                         else:
                             # Start TARS with this task
                             self.process_mgr.start(task=task)
 
                 elif msg_type == "send_message":
                     # Dashboard chat message — forward to local TARS WS
-                    # so it gets pushed into the reader's dashboard queue
+                    # so it gets pushed into the reader's dashboard queue.
+                    # Don't emit imessage_received here — TARS's server.py
+                    # already emits it, and the local WS listener forwards it.
                     msg_text = data.get("message", "")
                     if msg_text and self.process_mgr.is_running:
                         await self._forward_to_local(message)
-                        event_bus.emit("imessage_received", {"message": msg_text, "source": "dashboard"})
                     elif msg_text:
                         # TARS not running — start it with this message as task
                         self.process_mgr.start(task=msg_text)
@@ -605,15 +607,18 @@ class TARSTunnel:
             self._on_process_status_change(self.process_mgr.get_status())
 
     async def _forward_to_local(self, message: str):
-        """Forward a command to the local TARS WebSocket server."""
+        """Forward a command to the local TARS WebSocket server (fire-and-forget).
+
+        We don't wait for a meaningful response because the local WS
+        server blasts event history on connect — waiting for recv()
+        would just grab a random old event and forward it as noise.
+        """
         try:
             import websockets
             async with websockets.connect("ws://localhost:8421") as local_ws:
                 await local_ws.send(message)
-                response = await asyncio.wait_for(local_ws.recv(), timeout=5)
-                # Forward response back through tunnel
-                if self.ws:
-                    await self.ws.send(response)
+                # Don't await recv — the server sends history on connect
+                # which would be forwarded as duplicate events.
         except Exception:
             pass
 
@@ -623,11 +628,16 @@ class TARSTunnel:
         When TARS runs as a separate process (not spawned by tunnel),
         the patched event_bus.emit doesn't catch its events. This task
         connects to the local WS at :8421, subscribes to the event stream,
-        and forwards everything to the relay — bridging the gap.
+        and forwards live events to the relay — bridging the gap.
+
+        IMPORTANT: On connect, the local WS server replays its entire event
+        history. We skip those old events and only forward NEW ones by
+        comparing ts_unix against our connect time.
         """
         import websockets
         while self.running:
             try:
+                connect_time = time.time()
                 async with websockets.connect(
                     "ws://localhost:8421",
                     ping_interval=10,
@@ -637,11 +647,11 @@ class TARSTunnel:
                     async for message in local_ws:
                         try:
                             event = json.loads(message)
-                            # Forward to relay (avoid duplicating events the patched
-                            # emit already sent — those have ts_unix set by on_event_sync).
-                            # Events from the local WS won't have ts_unix, so we add it.
-                            if "ts_unix" not in event:
-                                event["ts_unix"] = time.time()
+                            # Skip old history events replayed on connect.
+                            # Only forward events that happened AFTER we connected.
+                            event_ts = event.get("ts_unix", 0)
+                            if event_ts < connect_time - 1:
+                                continue
                             if self.ws:
                                 await self.ws.send(json.dumps(event))
                         except json.JSONDecodeError:

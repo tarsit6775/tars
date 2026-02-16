@@ -1,45 +1,76 @@
 """
-TARS Brain v5: Autonomous Mind with MetaCognition
-
-Phases 1-14: v4 foundations (intent, threads, memory, tools)
-Phases 15-34: v5 enhancements (metacognition, decision cache,
-semantic compaction, multi-query recall, task decomposition,
-confidence gating, dynamic tool pruning, error patterns,
-cross-session continuity, structured reflection, reasoning trace)
+╔══════════════════════════════════════════════════════════════╗
+║       TARS — Brain v4: Autonomous LLM Planner                ║
+╠══════════════════════════════════════════════════════════════╣
+║  v4: The Brain That Thinks                                   ║
+║                                                              ║
+║  Architecture:                                               ║
+║    Phase 1 — Message Stream Parser (back-to-back msgs)       ║
+║    Phase 2 — Intent Classifier (zero LLM tokens)             ║
+║    Phase 3 — Conversation Threading (context continuity)     ║
+║    Phase 4 — Brain/Hands Separation (think vs do)            ║
+║    Phase 5 — Modular System Prompt (domain injection)        ║
+║    Phase 6 — Live Knowledge Access (web search)              ║
+║    Phase 7 — Task Decomposition (DAG subtasks)               ║
+║    Phase 8 — Smart Escalation (5 strategies before asking)   ║
+║    Phase 9 — Contextual Memory (auto-recall)                 ║
+║    Phase 13 — Decision Journal (every decision logged)       ║
+║    Phase 14 — Confidence Scoring (0-100 on decisions)        ║
+║                                                              ║
+║  Flow:                                                       ║
+║    message → classify intent → route to thread →             ║
+║    auto-recall memory → build focused prompt →               ║
+║    think (LLM loop) → execute tools → verify → report        ║
+║                                                              ║
+║  The Brain ONLY thinks and decides.                          ║
+║  The Executor ONLY executes.                                 ║
+║  Clean separation. No mixed concerns.                        ║
+╚══════════════════════════════════════════════════════════════╝
 """
 
 import os
-import re
 import time
-import json
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from brain.llm_client import LLMClient, _parse_failed_tool_call
 from brain.prompts import build_system_prompt, RECOVERY_PROMPT
-from brain.tools import TARS_TOOLS, get_tools_for_intent
+from brain.tools import TARS_TOOLS
 from brain.intent import IntentClassifier, Intent
 from brain.threads import ThreadManager
-from brain.metacognition import MetaCognitionMonitor
-from brain.decision_cache import DecisionCache
 from utils.event_bus import event_bus
 
 # Tools that depend on previous results — must run sequentially
 DEPENDENT_TOOLS = {"verify_result", "send_imessage", "wait_for_reply", "checkpoint"}
 # Tools safe to run in parallel
-PARALLEL_SAFE = {"think", "scan_environment", "recall_memory", "run_quick_command",
-                 "quick_read_file", "web_search", "save_memory"}
+PARALLEL_SAFE = {"think", "scan_environment", "recall_memory", "run_quick_command", "quick_read_file", "web_search"}
 
 
 class TARSBrain:
-    """Brain v5 — thinking engine with metacognition, decision cache,
-    semantic compaction, error patterns, cross-session continuity."""
+    """
+    The Brain — TARS's thinking engine.
+    
+    Responsibilities:
+    - Understand what the user wants (intent classification)
+    - Track conversation context (threading)
+    - Decide what to do (LLM reasoning)
+    - Route decisions to the Executor (tool calls)
+    - Verify results and adapt
+    - Escalate intelligently when stuck
+    
+    NOT responsible for:
+    - Executing tools (that's the Executor)
+    - Retrying agent deployments (that's the Executor)
+    - Managing LLM API errors (extracted to _call_llm helper)
+    """
 
     def __init__(self, config, tool_executor, memory_manager):
         self.config = config
+        
+        # ── Dual-provider LLM setup ──
         brain_cfg = config.get("brain_llm")
         llm_cfg = config["llm"]
-
+        
         if brain_cfg and brain_cfg.get("api_key"):
             self.client = LLMClient(
                 provider=brain_cfg["provider"],
@@ -57,13 +88,12 @@ class TARSBrain:
             self.brain_model = llm_cfg["heavy_model"]
             print(f"  🧠 Brain: {llm_cfg['provider']}/{self.brain_model} (single-provider)")
 
-        # Phase 31: Graceful degradation chain
+        # ── Provider failover ──
         self._primary_client = self.client
         self._primary_model = self.brain_model
         self._fallback_client = None
         self._fallback_model = None
         self._using_fallback = False
-        self._degradation_level = 0  # 0=primary, 1=fallback, 2+=emergency
 
         fb_cfg = config.get("fallback_llm")
         if fb_cfg and fb_cfg.get("api_key"):
@@ -75,29 +105,23 @@ class TARSBrain:
             self._fallback_model = fb_cfg["model"]
             print(f"  🔄 Fallback: {fb_cfg['provider']}/{self._fallback_model}")
 
+        # Legacy references for executor compatibility
         self.heavy_model = llm_cfg.get("heavy_model", llm_cfg.get("model", ""))
         self.fast_model = llm_cfg.get("fast_model", self.heavy_model)
+        
         self.tool_executor = tool_executor
         self.memory = memory_manager
         self.max_retries = config["safety"]["max_retries"]
 
+        # ── Phase 2: Intent Classifier ──
         self.intent_classifier = IntentClassifier()
 
+        # ── Phase 3: Conversation Threading ──
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         thread_dir = os.path.join(base_dir, "memory", "threads")
         self.threads = ThreadManager(persistence_dir=thread_dir)
-
-        # Phase 34: MetaCognition Monitor
-        self.metacognition = MetaCognitionMonitor()
-
-        # Phase 26: Decision Cache
-        self.decision_cache = DecisionCache(base_dir=base_dir)
-
-        # Phase 24: Error Pattern Database
-        self._error_patterns = {}
-        self._error_db_path = os.path.join(base_dir, "memory", "error_patterns.json")
-        self._load_error_patterns()
-
+        
+        # ── Conversation history (LLM-level) ──
         self.conversation_history = []
         self.max_history_messages = 80
         self.compaction_token_threshold = 80000
@@ -105,16 +129,10 @@ class TARSBrain:
         self.max_tool_loops = 50
         self._tool_loop_count = 0
 
-        # Phase 28: Reasoning Trace
-        self._reasoning_trace = []
-
+        # ── Conversation continuity ──
         self._last_message_time = 0
-        self._conversation_timeout = 600
+        self._conversation_timeout = 600  # 10 min
         self._message_count = 0
-
-        # Phase 33: Cross-Session Continuity
-        self._session_state_path = os.path.join(base_dir, "memory", "session_state.json")
-        self._restore_session_state()
 
     # ═══════════════════════════════════════════════════
     #  MAIN ENTRY POINT — process()
@@ -122,23 +140,21 @@ class TARSBrain:
 
     def process(self, batch_or_text) -> str:
         """
-        Main entry point — Brain v5.
-
+        Main entry point for the Brain v4.
+        
+        Accepts either:
+        - A MessageBatch (from the message stream parser)
+        - A raw string (backward compatibility)
+        
         Flow:
         1. Normalize input
-        2. Classify intent
-        3. Route to thread
-        4. Decision cache lookup (Phase 26)
-        5. Multi-query memory recall (Phase 19)
-        6. Task decomposition (Phase 17)
-        7. Dynamic tool pruning (Phase 22)
-        8. Build thread context
-        9. Reset metacognition (Phase 34)
-        10. Think via LLM loop
-        11. Structured reflection (Phase 27)
-        12. Record response in thread
-        13. Proactive anticipation (Phase 29)
-        14. Save session state (Phase 33)
+        2. Classify intent (Phase 2)
+        3. Route to thread (Phase 3)
+        4. Auto-recall memory (Phase 9)
+        5. Build focused prompt (Phase 5)
+        6. Think via LLM loop (Phase 4)
+        7. Record response in thread (Phase 3)
+        8. Return final response
         """
         # ── Step 1: Normalize input ──
         from brain.message_parser import MessageBatch
@@ -149,7 +165,7 @@ class TARSBrain:
             text = str(batch_or_text)
             batch_type = "single"
 
-        # ── Step 2: Classify intent ──
+        # ── Step 2: Classify intent (Phase 2 — zero LLM tokens) ──
         intent = self.intent_classifier.classify(
             text,
             has_active_thread=self.threads.has_active_thread,
@@ -157,69 +173,29 @@ class TARSBrain:
         )
         print(f"  🎯 Intent: {intent}")
 
-        # ── Step 3: Route to thread ──
+        # ── Step 3: Route to thread (Phase 3) ──
         thread = self.threads.route_message(text, intent.type, intent.confidence)
         print(f"  📎 Thread: {thread.topic} ({thread.id})")
 
-        # ── Step 4: Decision cache lookup (Phase 26) ──
-        cached = None
-        domain_hints = intent.domain_hints if intent and hasattr(intent, 'domain_hints') else []
-        if domain_hints:
-            cached = self.decision_cache.lookup(intent.type, domain_hints, text)
-            if cached:
-                print(f"  💾 Decision cache hit (reliability {cached.reliability:.0f}%)")
-                event_bus.emit("decision_cache_hit", {"task": text[:100], "reliability": cached.reliability})
-
-        # ── Step 5: Multi-query memory recall (Phase 19) ──
+        # ── Step 4: Auto-recall memory (Phase 9) ──
         memory_context = ""
         if intent.needs_memory:
-            memory_context = self._auto_recall_multi(text, intent)
+            memory_context = self._auto_recall(text)
 
-        # ── Step 6: Task decomposition (Phase 17) ──
-        subtask_plan = ""
-        if intent.type == "TASK" and len(text) > 60:
-            subtask_plan = self._decompose_task(text, intent)
-
-        # ── Step 7: Dynamic tool pruning (Phase 22) ──
-        active_tools = get_tools_for_intent(intent)
-        if len(active_tools) < len(TARS_TOOLS):
-            print(f"  🔧 Pruned tools: {len(TARS_TOOLS)} → {len(active_tools)}")
-
-        # ── Step 8: Build thread context ──
+        # ── Step 5: Build thread context ──
         thread_context = self.threads.get_context_for_brain()
 
-        # ── Step 9: Reset metacognition (Phase 34) ──
-        self.metacognition.reset()
-        self._reasoning_trace = []
-
-        # ── Step 10: Think (LLM loop) ──
-        # Inject error warning if we have patterns for this kind of task
-        error_warning = self._get_error_warning(text)
-
+        # ── Step 6: Think (LLM loop) ──
         response = self._think_loop(
             user_message=text,
             intent=intent,
             thread=thread,
             memory_context=memory_context,
             thread_context=thread_context,
-            subtask_plan=subtask_plan,
-            tools=active_tools,
-            error_warning=error_warning,
-            cached_decision=cached,
         )
 
-        # ── Step 11: Structured reflection (Phase 27) ──
-        if self._tool_loop_count > 3:
-            self._structured_reflection(text, response, intent)
-
-        # ── Step 12: Record response in thread ──
+        # ── Step 7: Record response in thread ──
         self.threads.record_response(response[:500])
-
-        # ── Step 13: Proactive anticipation (Phase 29) ──
-        self._proactive_check(text, response, intent)
-
-        # ── Step 14: Save session state (Phase 33) ──
-        self._save_session_state()
 
         return response
 
@@ -237,21 +213,27 @@ class TARSBrain:
     # ═══════════════════════════════════════════════════
 
     def _think_loop(self, user_message, intent, thread,
-                    memory_context="", thread_context="",
-                    subtask_plan="", tools=None, error_warning="",
-                    cached_decision=None) -> str:
+                    memory_context="", thread_context="") -> str:
         """
-        Core LLM thinking loop — v5 with metacognition + reasoning trace.
+        The core LLM thinking loop.
+        
+        Refactored from v3's monolithic think() method:
+        - LLM error handling extracted to _call_llm()
+        - Tool execution extracted to _execute_tool_calls()
+        - Prompt building uses the new modular system
+        
+        Still supports:
+        - Streaming with event bus
+        - Tool call loops (up to max_tool_loops)
+        - Context compaction
+        - Kill switch
+        - Provider failover
         """
-        if tools is None:
-            tools = TARS_TOOLS
-
         # ── Restore primary provider if we failed over previously ──
         if self._using_fallback and self._primary_client:
             self._using_fallback = False
             self.client = self._primary_client
             self.brain_model = self._primary_model
-            self._degradation_level = 0
             print(f"  🔄 Restored primary brain: {self._primary_model}")
 
         model = self.brain_model
@@ -267,27 +249,17 @@ class TARSBrain:
             print(f"  💭 Conversation gap: {int(time_since_last)}s — soft-resetting context")
             self._force_compact()
 
-        # ── Inject cached decision hint ──
-        hint = ""
-        if cached_decision:
-            hint = f"\n\n[Decision cache: Previously succeeded with strategy: {cached_decision.strategy}. Tools: {', '.join(cached_decision.tool_sequence[:5])}]"
-        if error_warning:
-            hint += f"\n\n[Error pattern warning: {error_warning}]"
-
         # ── Add user message to LLM history ──
         self.conversation_history.append({
             "role": "user",
-            "content": user_message + hint,
+            "content": user_message,
         })
 
         # ── Compact if needed ──
         self._compact_history()
 
-        # ── Build system prompt ──
-        system_prompt = self._build_system_prompt(
-            intent, thread_context, memory_context,
-            subtask_plan=subtask_plan,
-        )
+        # ── Build system prompt (Phase 5 — modular) ──
+        system_prompt = self._build_system_prompt(intent, thread_context, memory_context)
 
         # ── LLM thinking loop ──
         retry_count = 0
@@ -305,24 +277,8 @@ class TARSBrain:
                 event_bus.emit("error", {"message": f"Brain hit max tool loops ({self.max_tool_loops})"})
                 return f"⚠️ Reached maximum {self.max_tool_loops} tool call loops. Task may be partially complete."
 
-            # Phase 34: MetaCognition check every iteration
-            metacog = self.metacognition.analyze()
-            if metacog:
-                injection = self.metacognition.get_injection()
-                if injection:
-                    self.conversation_history.append({
-                        "role": "user",
-                        "content": injection,
-                    })
-                    self._reasoning_trace.append({
-                        "step": self._tool_loop_count,
-                        "type": "metacognition",
-                        "alert": metacog.get("alerts", []),
-                    })
-                    event_bus.emit("metacognition_alert", metacog)
-
             # ── Call LLM (with error handling + failover) ──
-            response, model = self._call_llm(system_prompt, model, tools=tools)
+            response, model = self._call_llm(system_prompt, model)
             if response is None:
                 return "❌ LLM API error — could not get a response after retries."
 
@@ -336,14 +292,6 @@ class TARSBrain:
             if response.stop_reason == "tool_use":
                 # ── Extract and execute tool calls ──
                 tool_calls = [b for b in assistant_content if b.type == "tool_use"]
-
-                # Phase 28: Log reasoning trace
-                self._reasoning_trace.append({
-                    "step": self._tool_loop_count,
-                    "type": "tool_calls",
-                    "tools": [tc.name for tc in tool_calls],
-                })
-
                 tool_results = self._execute_tool_calls(tool_calls, retry_count, intent, thread)
 
                 # Add tool results to conversation
@@ -355,30 +303,25 @@ class TARSBrain:
                 # Compact if growing
                 self._compact_history()
 
-                # Continue — LLM processes tool results next
+                # Continue the loop — LLM processes tool results next
                 event_bus.emit("thinking_start", {"model": model})
                 continue
 
             else:
-                # ── Final text response ──
+                # ── Final text response — extract it ──
                 final_text = ""
                 for block in assistant_content:
                     if hasattr(block, "text"):
                         final_text += block.text
 
-                # Phase 28: Log final reasoning
-                self._reasoning_trace.append({
-                    "step": self._tool_loop_count,
-                    "type": "final_response",
-                    "length": len(final_text),
-                })
-
+                # Phase 13: Self-reflection for non-trivial tasks
                 if self._tool_loop_count > 3:
                     event_bus.emit("self_reflection", {
                         "loops": self._tool_loop_count,
                         "response": final_text[:300],
                     })
 
+                self._tool_loop_count = 0
                 event_bus.emit("task_completed", {"response": final_text[:300]})
                 return final_text
 
@@ -386,7 +329,7 @@ class TARSBrain:
     #  LLM CALL (with error handling, retry, failover)
     # ═══════════════════════════════════════════════════
 
-    def _call_llm(self, system_prompt, model, tools=None):
+    def _call_llm(self, system_prompt, model):
         """
         Make a streaming LLM call with full error handling.
         
@@ -395,14 +338,10 @@ class TARSBrain:
         - Transient errors (5xx, timeout) → retry with backoff
         - Malformed tool calls (Groq/Llama) → parse and recover
         - Non-retryable errors (API key revoked) → fail fast
-        - Phase 24: Error pattern recording
-        - Phase 31: Degradation level tracking
         
         Returns:
             (response, model_used) or (None, model) on unrecoverable failure
         """
-        if tools is None:
-            tools = TARS_TOOLS
         call_start = time.time()
 
         try:
@@ -411,7 +350,7 @@ class TARSBrain:
                 model=model,
                 max_tokens=8192,
                 system=system_prompt,
-                tools=tools,
+                tools=TARS_TOOLS,
                 messages=self.conversation_history,
             ) as stream:
                 for event in stream:
@@ -463,18 +402,15 @@ class TARSBrain:
                     "rate_limit", "rate limit", "429", "resource_exhausted"
                 ))
 
-                # Phase 24: Record error pattern
-                self._record_error_pattern("llm_call", error_str, model)
-
                 # ── Strategy 1: Provider failover (instant) ──
                 if is_rate_limit and self._fallback_client and not self._using_fallback:
-                    result, new_model = self._failover_to_fallback(system_prompt, tools=tools)
+                    result, new_model = self._failover_to_fallback(system_prompt)
                     if result is not None:
                         return result, new_model
 
                 # ── Strategy 2: Retry with backoff ──
                 result = self._retry_with_backoff(
-                    system_prompt, model, is_rate_limit, error_type, tools=tools
+                    system_prompt, model, is_rate_limit, error_type
                 )
                 if result is not None:
                     return result, model
@@ -487,7 +423,7 @@ class TARSBrain:
                         model=model,
                         max_tokens=8192,
                         system=system_prompt,
-                        tools=tools,
+                        tools=TARS_TOOLS,
                         messages=self.conversation_history,
                     )
                     call_duration = time.time() - call_start
@@ -495,22 +431,18 @@ class TARSBrain:
                     print(f"  🔧 Brain: Non-streaming fallback succeeded")
                     return response, model
                 except Exception as e2:
-                    self._record_error_pattern("llm_call", str(e2), model)
                     event_bus.emit("error", {"message": f"LLM API error: {e2}"})
                     self._emergency_notify(str(e2))
 
             return None, model
 
-    def _failover_to_fallback(self, system_prompt, tools=None):
+    def _failover_to_fallback(self, system_prompt):
         """Switch to fallback LLM provider."""
-        if tools is None:
-            tools = TARS_TOOLS
         self._using_fallback = True
-        self._degradation_level = 1
         self.client = self._fallback_client
         model = self._fallback_model
         self.brain_model = model
-        print(f"  🔄 FAILOVER: Switching brain to {model} (degradation={self._degradation_level})")
+        print(f"  🔄 FAILOVER: Switching brain to {model}")
         event_bus.emit("status_change", {"status": "online", "label": f"FAILOVER → {model}"})
 
         try:
@@ -518,22 +450,20 @@ class TARSBrain:
                 model=model,
                 max_tokens=8192,
                 system=system_prompt,
-                tools=tools,
+                tools=TARS_TOOLS,
                 messages=self.conversation_history,
             )
+            call_duration = time.time()
             self._emit_api_stats(model, response, 0)
             print(f"  ✅ Fallback provider succeeded: {model}")
             return response, model
         except Exception as fb_e:
-            self._degradation_level = 2
             print(f"  ⚠️ Fallback also failed: {fb_e}")
             return None, model
 
-    def _retry_with_backoff(self, system_prompt, model, is_rate_limit, error_type, tools=None):
+    def _retry_with_backoff(self, system_prompt, model, is_rate_limit, error_type):
         """Retry LLM call with exponential backoff."""
         import random as _rand
-        if tools is None:
-            tools = TARS_TOOLS
         max_api_retries = 5
 
         for attempt in range(1, max_api_retries + 1):
@@ -555,7 +485,7 @@ class TARSBrain:
                     model=model,
                     max_tokens=8192,
                     system=system_prompt,
-                    tools=tools,
+                    tools=TARS_TOOLS,
                     messages=self.conversation_history,
                 )
                 self._emit_api_stats(model, response, 0)
@@ -569,7 +499,6 @@ class TARSBrain:
                 # Mid-retry failover
                 if attempt == 2 and self._fallback_client and not self._using_fallback:
                     self._using_fallback = True
-                    self._degradation_level = 1
                     self.client = self._fallback_client
                     model = self._fallback_model
                     self.brain_model = model
@@ -590,10 +519,11 @@ class TARSBrain:
 
     def _execute_tool_calls(self, tool_calls, retry_count, intent, thread):
         """
-        Execute a batch of tool calls — v5 with metacognition + error patterns.
-
+        Execute a batch of tool calls from the LLM response.
+        
         Supports parallel execution for independent tools.
-        Records to metacognition, decision cache, and reasoning trace.
+        Logs decisions to the thread journal.
+        Emits events for the dashboard.
         """
         tool_results = []
 
@@ -614,13 +544,6 @@ class TARSBrain:
                     exec_duration = time.time() - start_times[block.id]
                     result = future.result()
                     self._emit_tool_result(block, result, exec_duration)
-
-                    # Phase 34: Record in metacognition
-                    self.metacognition.record_tool_call(
-                        block.name, block.input,
-                        result.get("success", False), exec_duration
-                    )
-
                     result = self._enrich_failure(result, retry_count)
                     tool_results.append(self._format_tool_result(block, result))
         else:
@@ -632,7 +555,7 @@ class TARSBrain:
 
                 self._emit_tool_start(block)
 
-                # Log decision in thread
+                # Phase 13: Log decision
                 self.threads.log_decision(
                     action=tool_name,
                     reasoning=f"Called with: {str(tool_input)[:150]}",
@@ -647,31 +570,8 @@ class TARSBrain:
 
                 self._emit_tool_result(block, result, exec_duration)
 
-                # Phase 34: Record in metacognition
-                success = result.get("success", not result.get("error", False))
-                self.metacognition.record_tool_call(tool_name, tool_input, success, exec_duration)
-
-                # Phase 24: Record error pattern on failure
-                if not success:
-                    self._record_error_pattern(
-                        tool_name,
-                        result.get("content", "unknown error"),
-                        str(tool_input)[:200],
-                    )
-
-                # Phase 26: Record in decision cache on success
-                if success and tool_name not in ("think", "scan_environment"):
-                    domain = intent.domain_hints[0] if (intent and intent.domain_hints) else "general"
-                    self.decision_cache.record_success(
-                        intent_type=intent.type if intent else "TASK",
-                        domain=domain,
-                        pattern=tool_name,
-                        tool_sequence=[tool_name],
-                        strategy=f"{tool_name} with {str(tool_input)[:100]}",
-                    )
-
-                # Update decision outcome
-                outcome = "success" if success else "failed"
+                # Phase 13: Update decision outcome
+                outcome = "success" if result.get("success") else "failed"
                 self.threads.update_decision_outcome(outcome)
 
                 # Enrich failures with retry guidance
@@ -739,10 +639,16 @@ class TARSBrain:
     #  SYSTEM PROMPT BUILDER (Phase 5)
     # ═══════════════════════════════════════════════════
 
-    def _build_system_prompt(self, intent, thread_context="", memory_context="",
-                             subtask_plan=""):
+    def _build_system_prompt(self, intent, thread_context="", memory_context=""):
         """
-        Build the system prompt — v5 with subtask plan + metacog injection.
+        Build the system prompt using the modular prompt system.
+        
+        Injects:
+        - Only relevant domain knowledge (based on intent)
+        - Thread context (conversation continuity)
+        - Auto-recalled memory
+        - Compacted old context
+        - Session performance summary
         """
         # Get session summary from self-improvement engine
         session_summary = ""
@@ -753,12 +659,6 @@ class TARSBrain:
         full_memory_context = self.memory.get_context_summary()
         if memory_context:
             full_memory_context = f"{full_memory_context}\n\n## Auto-recalled for this message\n{memory_context}"
-
-        # Phase 34: Metacognition context
-        metacog_context = ""
-        metacog_state = self.metacognition.analyze()
-        if metacog_state and metacog_state.get("alerts"):
-            metacog_context = self.metacognition.get_injection()
 
         return build_system_prompt(
             humor_level=self.config["agent"]["humor_level"],
@@ -773,8 +673,6 @@ class TARSBrain:
             thread_context=thread_context,
             compacted_summary=self._compacted_summary,
             session_summary=session_summary,
-            subtask_plan=subtask_plan,
-            metacog_context=metacog_context,
         )
 
     # ═══════════════════════════════════════════════════
@@ -782,58 +680,29 @@ class TARSBrain:
     # ═══════════════════════════════════════════════════
 
     def _auto_recall(self, text: str) -> str:
-        """Legacy single-query recall — delegates to multi-query version."""
-        return self._auto_recall_multi(text)
-
-    def _auto_recall_multi(self, text: str, intent=None) -> str:
         """
-        Phase 19: Multi-query memory recall.
-
-        Instead of a single search, generates 2-3 queries from different
-        angles to catch more relevant memories.
+        Automatically recall relevant memories before thinking.
+        
+        Phase 9: Contextual Memory Injection.
+        Instead of the Brain having to explicitly call recall_memory,
+        we automatically search memory based on the message content
+        and inject relevant results into the prompt.
         """
-        queries = [text[:100]]
-
-        # Extract potential entity names (capitalized words)
-        words = text.split()
-        entities = [w for w in words if w[0:1].isupper() and len(w) > 2]
-        if entities:
-            queries.append(" ".join(entities[:5]))
-
-        # Extract action + object pattern
-        action_words = {"find", "search", "create", "build", "fix", "update",
-                        "check", "get", "send", "write", "read", "install",
-                        "deploy", "run", "test", "debug", "setup", "configure"}
-        for w in words:
-            if w.lower() in action_words:
-                idx = words.index(w)
-                context_slice = " ".join(words[max(0, idx-1):min(len(words), idx+4)])
-                if context_slice not in queries:
-                    queries.append(context_slice)
-                break
-
-        # Deduplicate and search
-        seen = set()
-        results = []
-        for q in queries:
-            if q in seen or len(q) < 5:
-                continue
-            seen.add(q)
-            try:
-                result = self.memory.recall(q)
-                if result.get("success") and result.get("content"):
-                    content = result["content"]
-                    if len(content) > 20 and content != "No memories found.":
-                        results.append(content)
-            except Exception:
-                pass
-
-        if not results:
-            return ""
-
-        # Merge and cap
-        merged = "\n---\n".join(results)
-        return merged[:1200]
+        try:
+            # Extract key terms for memory search
+            # Use first 100 chars as search query
+            query = text[:100]
+            result = self.memory.recall(query)
+            
+            if result.get("success") and result.get("content"):
+                content = result["content"]
+                # Only inject if we found something meaningful
+                if len(content) > 20 and content != "No memories found.":
+                    return content[:800]  # Cap at 800 chars
+        except Exception:
+            pass
+        
+        return ""
 
     # ═══════════════════════════════════════════════════
     #  CONTEXT MANAGEMENT
@@ -985,8 +854,6 @@ class TARSBrain:
             self.conversation_history = []
             self._compacted_summary = ""
             self._message_count = 0
-            self._reasoning_trace = []
-            self.metacognition.reset()
         else:
             self._force_compact()
         event_bus.emit("status_change", {"status": "online", "label": "READY"})
@@ -997,294 +864,9 @@ class TARSBrain:
 
     def get_thread_stats(self) -> dict:
         """Get thread statistics for the dashboard."""
-        stats = self.threads.get_thread_stats()
-        stats["metacognition"] = {
-            "total_tool_calls": self.metacognition.state.total_tool_calls,
-            "total_failures": self.metacognition.state.total_failures,
-            "alerts": self.metacognition.state.alerts,
-        }
-        stats["decision_cache_size"] = len(self.decision_cache._entries)
-        stats["error_patterns"] = len(self._error_patterns)
-        stats["degradation_level"] = self._degradation_level
-        return stats
+        return self.threads.get_thread_stats()
 
     @property
     def active_thread(self):
         """Get the active thread (for external access)."""
         return self.threads.active_thread
-
-    def get_reasoning_trace(self) -> list:
-        """Get the reasoning trace for the current/last task."""
-        return list(self._reasoning_trace)
-
-    def get_error_pattern_stats(self) -> dict:
-        """Get summary of recorded error patterns."""
-        return {
-            "total_patterns": len(self._error_patterns),
-            "patterns": {
-                sig: {
-                    "count": data.get("count", 0),
-                    "last_seen": data.get("last_seen", ""),
-                    "context": data.get("context", "")[:100],
-                }
-                for sig, data in list(self._error_patterns.items())[:20]
-            },
-        }
-
-    # ═══════════════════════════════════════════════════
-    #  TASK DECOMPOSITION (Phase 17)
-    # ═══════════════════════════════════════════════════
-
-    def _decompose_task(self, text, intent):
-        """
-        Break a complex task into subtasks for the thread journal.
-        
-        Uses keyword heuristics (no LLM call) to identify sub-steps.
-        Returns a subtask plan string for prompt injection.
-        """
-        subtasks = []
-
-        # Detect multi-step indicators
-        lines = text.split("\n")
-        numbered = [l.strip() for l in lines if re.match(r"^\d+[\.\)]\s", l.strip())]
-        if numbered:
-            subtasks = numbered[:8]
-        else:
-            # Detect "and" / "then" / "also" splits
-            parts = re.split(r"\b(?:then|and then|after that|also|next)\b", text, flags=re.IGNORECASE)
-            if len(parts) > 1:
-                subtasks = [p.strip() for p in parts if len(p.strip()) > 10][:6]
-
-        if not subtasks:
-            return ""
-
-        # Record subtasks in thread
-        for i, st in enumerate(subtasks):
-            self.threads.add_subtask(st[:200], priority=len(subtasks) - i)
-
-        plan = "## Task Breakdown\n"
-        for i, st in enumerate(subtasks, 1):
-            plan += f"{i}. {st[:200]}\n"
-        plan += "\nWork through these steps in order. Report progress after each.\n"
-
-        event_bus.emit("task_decomposed", {"subtasks": subtasks})
-        return plan
-
-    # ═══════════════════════════════════════════════════
-    #  STRUCTURED REFLECTION (Phase 27)
-    # ═══════════════════════════════════════════════════
-
-    def _structured_reflection(self, task, response, intent):
-        """
-        Post-task structured reflection — learns from what just happened.
-        """
-        try:
-            metacog_state = self.metacognition.state
-            reflection = {
-                "task": task[:200],
-                "loops": self._tool_loop_count,
-                "total_tool_calls": metacog_state.total_tool_calls,
-                "failures": metacog_state.total_failures,
-                "alerts": list(metacog_state.alerts),
-                "intent": intent.type if intent else "unknown",
-                "response_length": len(response),
-                "timestamp": datetime.now().isoformat(),
-            }
-
-            # Determine efficiency
-            if metacog_state.total_failures > metacog_state.total_tool_calls * 0.5:
-                reflection["quality"] = "poor"
-                event_bus.emit("reflection", {
-                    "quality": "poor",
-                    "reason": "High failure rate",
-                    "task": task[:100],
-                })
-            elif self._tool_loop_count > 15:
-                reflection["quality"] = "slow"
-                event_bus.emit("reflection", {
-                    "quality": "slow",
-                    "reason": f"Took {self._tool_loop_count} loops",
-                    "task": task[:100],
-                })
-            else:
-                reflection["quality"] = "good"
-
-            # Record successful pattern in decision cache
-            if reflection["quality"] != "poor":
-                tool_sequence = []
-                for t in self._reasoning_trace:
-                    if t.get("type") == "tool_calls":
-                        tool_sequence.extend(t.get("tools", []))
-                if tool_sequence:
-                    domain = intent.domain_hints[0] if (intent and intent.domain_hints) else "general"
-                    self.decision_cache.record_success(
-                        intent_type=intent.type if intent else "TASK",
-                        domain=domain,
-                        pattern=task[:200],
-                        tool_sequence=tool_sequence[:20],
-                        strategy=f"Completed in {self._tool_loop_count} loops",
-                    )
-
-        except Exception as e:
-            print(f"  ⚠️ Reflection error: {e}")
-
-    # ═══════════════════════════════════════════════════
-    #  PROACTIVE ANTICIPATION (Phase 29)
-    # ═══════════════════════════════════════════════════
-
-    def _proactive_check(self, task, response, intent):
-        """
-        After completing a task, check if there's an obvious follow-up
-        and prepare context for it.
-        """
-        try:
-            # If task involved code changes, anticipate testing
-            code_tools = {"run_command", "write_file", "code_task"}
-            trace_tools = set()
-            for t in self._reasoning_trace:
-                if t.get("type") == "tool_calls":
-                    trace_tools.update(t.get("tools", []))
-
-            if trace_tools & code_tools:
-                event_bus.emit("proactive_hint", {
-                    "hint": "Code was modified — consider testing/verification",
-                    "tools_used": list(trace_tools & code_tools),
-                })
-
-            # If deployment happened, anticipate health check
-            if "deploy" in task.lower() or "deploy" in response.lower():
-                event_bus.emit("proactive_hint", {
-                    "hint": "Deployment detected — health check recommended",
-                })
-
-        except Exception:
-            pass
-
-    # ═══════════════════════════════════════════════════
-    #  ERROR PATTERN DATABASE (Phase 24)
-    # ═══════════════════════════════════════════════════
-
-    def _extract_error_signature(self, error_str):
-        """Extract a normalized signature from an error string."""
-        # Remove dynamic values (paths, numbers, timestamps)
-        sig = re.sub(r"/[\w/\-.]+", "<PATH>", error_str)
-        sig = re.sub(r"\b\d{4,}\b", "<NUM>", sig)
-        sig = re.sub(r"0x[0-9a-fA-F]+", "<HEX>", sig)
-        sig = re.sub(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "<EMAIL>", sig)
-        # Truncate
-        return sig[:200]
-
-    def _record_error_pattern(self, context, error_str, details=""):
-        """Record an error pattern for future avoidance."""
-        sig = self._extract_error_signature(error_str)
-        key = f"{context}:{sig}"
-
-        if key in self._error_patterns:
-            self._error_patterns[key]["count"] += 1
-            self._error_patterns[key]["last_seen"] = datetime.now().isoformat()
-        else:
-            self._error_patterns[key] = {
-                "signature": sig,
-                "context": context,
-                "details": details[:300],
-                "count": 1,
-                "first_seen": datetime.now().isoformat(),
-                "last_seen": datetime.now().isoformat(),
-            }
-
-        # Save periodically (every 5 new patterns)
-        if sum(1 for p in self._error_patterns.values() if p["count"] == 1) % 5 == 0:
-            self._save_error_patterns()
-
-    def _get_error_warning(self, task_text):
-        """Check if we have error patterns that match this task context."""
-        if not self._error_patterns:
-            return ""
-
-        warnings = []
-        task_lower = task_text.lower()
-        for key, data in self._error_patterns.items():
-            context = data.get("context", "").lower()
-            if context in task_lower or any(
-                w in task_lower for w in context.split("_") if len(w) > 3
-            ):
-                if data.get("count", 0) >= 2:
-                    warnings.append(
-                        f"⚠️ Previously failed {data['count']}x on '{data['context']}': "
-                        f"{data['signature'][:100]}"
-                    )
-
-        if warnings:
-            return "\n".join(warnings[:3])
-        return ""
-
-    def _load_error_patterns(self):
-        """Load error patterns from disk."""
-        try:
-            if os.path.exists(self._error_db_path):
-                with open(self._error_db_path, "r") as f:
-                    self._error_patterns = json.load(f)
-                print(f"  📊 Loaded {len(self._error_patterns)} error patterns")
-        except Exception:
-            self._error_patterns = {}
-
-    def _save_error_patterns(self):
-        """Persist error patterns to disk."""
-        try:
-            # Keep only top 100 most frequent
-            if len(self._error_patterns) > 100:
-                sorted_patterns = sorted(
-                    self._error_patterns.items(),
-                    key=lambda x: x[1].get("count", 0),
-                    reverse=True,
-                )
-                self._error_patterns = dict(sorted_patterns[:100])
-
-            os.makedirs(os.path.dirname(self._error_db_path), exist_ok=True)
-            with open(self._error_db_path, "w") as f:
-                json.dump(self._error_patterns, f, indent=2)
-        except Exception as e:
-            print(f"  ⚠️ Failed to save error patterns: {e}")
-
-    # ═══════════════════════════════════════════════════
-    #  CROSS-SESSION CONTINUITY (Phase 33)
-    # ═══════════════════════════════════════════════════
-
-    def _save_session_state(self):
-        """Save lightweight session state for continuity across restarts."""
-        try:
-            state = {
-                "last_active": datetime.now().isoformat(),
-                "message_count": self._message_count,
-                "compacted_summary": self._compacted_summary[:2000],
-                "degradation_level": self._degradation_level,
-                "active_thread_id": (
-                    self.threads.active_thread.id
-                    if self.threads.active_thread else None
-                ),
-            }
-            os.makedirs(os.path.dirname(self._session_state_path), exist_ok=True)
-            with open(self._session_state_path, "w") as f:
-                json.dump(state, f, indent=2)
-        except Exception as e:
-            print(f"  ⚠️ Failed to save session state: {e}")
-
-    def _restore_session_state(self):
-        """Restore session state from previous run."""
-        try:
-            if os.path.exists(self._session_state_path):
-                with open(self._session_state_path, "r") as f:
-                    state = json.load(f)
-
-                last_active = state.get("last_active", "")
-                if last_active:
-                    print(f"  📋 Restoring session (last active: {last_active})")
-
-                self._compacted_summary = state.get("compacted_summary", "")
-                self._message_count = state.get("message_count", 0)
-
-                # If we were degraded, start fresh
-                if state.get("degradation_level", 0) > 0:
-                    print(f"  ⚠️ Previous session was degraded — starting fresh")
-        except Exception:
-            pass

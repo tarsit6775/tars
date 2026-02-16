@@ -482,3 +482,74 @@ TARS_TOOLS = [
         }
     },
 ]
+
+
+# ═══════════════════════════════════════════════════
+#  DYNAMIC TOOL PRUNING (Phase 22)
+# ═══════════════════════════════════════════════════
+
+# Core tools always included regardless of intent
+_CORE_TOOLS = {
+    "think", "send_imessage", "wait_for_reply", "recall_memory",
+    "save_memory", "scan_environment", "checkpoint",
+}
+
+# Domain-specific tool groups
+_DOMAIN_TOOLS = {
+    "coding": {"run_command", "run_quick_command", "write_file", "quick_read_file",
+               "code_task", "file_task", "verify_result"},
+    "web": {"web_search", "web_task", "browse_url", "browse_page"},
+    "files": {"write_file", "quick_read_file", "file_task", "verify_result",
+              "run_quick_command"},
+    "system": {"run_command", "run_quick_command", "system_task",
+               "scan_environment", "mac_control"},
+    "communication": {"send_imessage", "wait_for_reply", "send_email"},
+    "research": {"web_search", "web_task", "browse_url", "browse_page",
+                 "research_task", "quick_read_file"},
+    "report": {"generate_report", "write_file", "quick_read_file"},
+}
+
+# Build a name→tool lookup once
+_TOOL_BY_NAME = {t["name"]: t for t in TARS_TOOLS}
+
+
+def get_tools_for_intent(intent) -> list:
+    """
+    Return a filtered subset of TARS_TOOLS based on the classified intent.
+
+    For CONVERSATION intents, returns only core tools (saves tokens).
+    For TASK intents, uses domain hints to select relevant tool groups.
+    Falls back to full tool set if no pruning applies.
+    """
+    if intent is None:
+        return TARS_TOOLS
+
+    intent_type = intent.type if hasattr(intent, "type") else str(intent)
+
+    # Conversations only need core tools
+    if intent_type == "CONVERSATION":
+        return [t for t in TARS_TOOLS if t["name"] in _CORE_TOOLS]
+
+    # For tasks, build a set of relevant tool names
+    if intent_type == "TASK":
+        needed = set(_CORE_TOOLS)
+
+        domain_hints = getattr(intent, "domain_hints", [])
+        if domain_hints:
+            for hint in domain_hints:
+                hint_lower = hint.lower()
+                for domain, tools in _DOMAIN_TOOLS.items():
+                    if domain in hint_lower or hint_lower in domain:
+                        needed.update(tools)
+
+        # If domain hints gave us a good set, use it
+        if len(needed) > len(_CORE_TOOLS):
+            # Always include verify_result for tasks
+            needed.add("verify_result")
+            filtered = [t for t in TARS_TOOLS if t["name"] in needed]
+            # Minimum 10 tools to avoid over-pruning
+            if len(filtered) >= 10:
+                return filtered
+
+    # Default: return all tools
+    return TARS_TOOLS

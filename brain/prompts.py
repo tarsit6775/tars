@@ -397,6 +397,8 @@ def build_system_prompt(
     thread_context: str = "",
     compacted_summary: str = "",
     session_summary: str = "",
+    subtask_plan: str = "",
+    metacog_context: str = "",
 ) -> str:
     """
     Build the full system prompt from modular components.
@@ -419,6 +421,8 @@ def build_system_prompt(
         thread_context: From ThreadManager.get_context_for_brain()
         compacted_summary: Compressed old conversation context
         session_summary: Self-improvement session stats
+        subtask_plan: Phase 17 task decomposition plan
+        metacog_context: Phase 34 metacognition alerts/injection
     """
     parts = []
 
@@ -467,6 +471,10 @@ def build_system_prompt(
         extra_parts.append(f"## Previous Context (compacted)\n{compacted_summary}")
     if session_summary and "No tasks" not in session_summary:
         extra_parts.append(f"\n{session_summary}")
+    if subtask_plan:
+        extra_parts.append(subtask_plan)
+    if metacog_context:
+        extra_parts.append(f"## Self-Awareness Alert\n{metacog_context}")
 
     context = CONTEXT_TEMPLATE.format(
         current_time=current_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

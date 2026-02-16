@@ -205,6 +205,24 @@ class TARSServer:
                     # Process in a thread so we don't block
                     threading.Thread(target=self.tars._process_task, args=(task,), daemon=True).start()
 
+            elif msg_type == "send_message":
+                # Dashboard chat message — works like iMessage.
+                # If the brain is currently waiting for a reply (wait_for_reply),
+                # the message is pushed into the reader's dashboard queue so the
+                # brain picks it up. It's ALSO fed through the message parser
+                # as a new task in case the brain isn't waiting.
+                message = data.get("message", "")
+                if message and self.tars:
+                    # Emit event so dashboard sees it as an incoming user message
+                    event_bus.emit("imessage_received", {"message": message, "source": "dashboard"})
+
+                    # Push into the reader's dashboard queue (for wait_for_reply)
+                    self.tars.imessage_reader.push_dashboard_message(message)
+
+                    # Also feed through the message parser (for new tasks)
+                    # The parser's 3s merge window handles back-to-back messages
+                    self.tars.message_parser.ingest(message)
+
             elif msg_type == "get_agents":
                 agent_data = agent_monitor.get_dashboard_data()
                 await websocket.send(json.dumps({"type": "agent_status", "data": agent_data}))

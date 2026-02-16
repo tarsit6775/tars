@@ -16,6 +16,7 @@ import sqlite3
 import time
 import os
 import re
+import queue
 from collections import deque
 
 import logging
@@ -30,6 +31,9 @@ class IMessageReader:
         self._last_message_rowid = self._get_latest_rowid()
         # Idempotent dedup — bounded set of recently processed ROWIDs
         self._seen_rowids = deque(maxlen=1000)
+        # Dashboard reply queue — messages from the web dashboard chat
+        # are pushed here so wait_for_reply picks them up just like iMessages
+        self._dashboard_queue = queue.Queue()
 
     # ── attributedBody parser ────────────────────────────────────
     @staticmethod
@@ -139,19 +143,50 @@ class IMessageReader:
             logger.warning(f"  ⚠️ Error reading chat.db: {e}")
             return []
 
+    def push_dashboard_message(self, text):
+        """Push a message from the dashboard chat into the reply queue.
+        
+        This lets the web dashboard act as a full iMessage replacement.
+        Messages pushed here are picked up by wait_for_reply() on the
+        next poll cycle — exactly like an incoming iMessage.
+        """
+        self._dashboard_queue.put(text)
+        logger.info(f"  🌐 Dashboard message queued: {text[:80]}")
+
+    def _drain_dashboard_queue(self):
+        """Drain all pending dashboard messages (non-blocking)."""
+        messages = []
+        while True:
+            try:
+                msg = self._dashboard_queue.get_nowait()
+                messages.append(msg)
+            except queue.Empty:
+                break
+        return messages
+
     def wait_for_reply(self, timeout=300):
         """
-        Block and poll chat.db until a new message arrives from the owner.
-        Returns the message text, or None if timed out.
+        Block and poll until a new message arrives from the owner.
+        Checks BOTH iMessage (chat.db) AND the dashboard chat queue.
+        
+        Returns the message text, or error dict if timed out.
         
         NOTE: We do NOT reset _last_message_rowid here. If a message arrived
         between our last check and now, we WANT to catch it — resetting would
         permanently skip it.
         """
-        logger.info(f"  📱 Waiting for iMessage reply (timeout: {timeout}s)...")
+        logger.info(f"  📱 Waiting for reply (iMessage + dashboard, timeout: {timeout}s)...")
         start = time.time()
 
         while time.time() - start < timeout:
+            # ── Check dashboard queue first (instant) ──
+            dashboard_msgs = self._drain_dashboard_queue()
+            if dashboard_msgs:
+                reply = "\n".join(dashboard_msgs)
+                logger.info(f"  🌐 Reply from dashboard ({len(dashboard_msgs)} msg(s)): {reply[:80]}")
+                return {"success": True, "content": reply}
+
+            # ── Check iMessage (chat.db) ──
             messages = self._get_new_messages()
             if messages:
                 # Concatenate all messages so none are lost when multiple

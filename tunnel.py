@@ -523,6 +523,17 @@ class TARSTunnel:
                             # Start TARS with this task
                             self.process_mgr.start(task=task)
 
+                elif msg_type == "send_message":
+                    # Dashboard chat message — forward to local TARS WS
+                    # so it gets pushed into the reader's dashboard queue
+                    msg_text = data.get("message", "")
+                    if msg_text and self.process_mgr.is_running:
+                        await self._forward_to_local(message)
+                        event_bus.emit("imessage_received", {"message": msg_text, "source": "dashboard"})
+                    elif msg_text:
+                        # TARS not running — start it with this message as task
+                        self.process_mgr.start(task=msg_text)
+
                 elif msg_type == "kill":
                     if self.process_mgr.is_running:
                         self.process_mgr.kill()
@@ -567,6 +578,21 @@ class TARSTunnel:
             else:
                 # Start TARS with this task
                 return self.process_mgr.start(task=task)
+
+        elif command == "send_message":
+            message = data.get("message", "")
+            if not message:
+                return {"success": False, "error": "No message provided"}
+            if self.process_mgr.is_running:
+                # Forward to running TARS as a dashboard chat message
+                asyncio.run_coroutine_threadsafe(
+                    self._forward_to_local(json.dumps({"type": "send_message", "message": message})),
+                    self._loop,
+                )
+                return {"success": True, "message": "Message sent to running TARS"}
+            else:
+                # TARS not running — start it with this message
+                return self.process_mgr.start(task=message)
 
         return {"success": False, "error": f"Unknown command: {command}"}
 

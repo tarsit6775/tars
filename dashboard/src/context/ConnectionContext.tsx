@@ -409,7 +409,7 @@ export function TarsProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const sendMessage = useCallback((msg: string) => {
-    wsRef.current?.send({ type: 'send_task', task: msg })
+    wsRef.current?.send({ type: 'send_message', message: msg })
     msgIdRef.current++
     setMessages(prev => [...prev, {
       id: msgIdRef.current, text: msg, sender: 'user', time: new Date().toLocaleTimeString(), timestamp: Date.now(),

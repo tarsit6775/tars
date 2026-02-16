@@ -241,5 +241,93 @@ class TestIMessageSenderSecurity(unittest.TestCase):
         self.assertEqual(call_args[-1], evil_msg, "Message should be passed as argv")
 
 
+class TestDashboardQueue(unittest.TestCase):
+    """Test dashboard chat queue — messages pushed from the web dashboard
+    are picked up by wait_for_reply just like iMessages."""
+
+    @patch("voice.imessage_read.IMessageReader._get_latest_rowid", return_value=0)
+    def test_push_dashboard_message(self, mock_rowid):
+        """push_dashboard_message should add to the internal queue."""
+        from voice.imessage_read import IMessageReader
+        reader = IMessageReader(_reader_config())
+        reader.push_dashboard_message("hello from dashboard")
+        self.assertFalse(reader._dashboard_queue.empty())
+
+    @patch("voice.imessage_read.IMessageReader._get_latest_rowid", return_value=0)
+    def test_drain_dashboard_queue(self, mock_rowid):
+        """_drain_dashboard_queue should return all queued messages."""
+        from voice.imessage_read import IMessageReader
+        reader = IMessageReader(_reader_config())
+        reader.push_dashboard_message("msg1")
+        reader.push_dashboard_message("msg2")
+        msgs = reader._drain_dashboard_queue()
+        self.assertEqual(msgs, ["msg1", "msg2"])
+        # Queue should be empty after drain
+        self.assertTrue(reader._dashboard_queue.empty())
+
+    @patch("voice.imessage_read.IMessageReader._get_latest_rowid", return_value=0)
+    def test_drain_empty_queue(self, mock_rowid):
+        """Draining an empty queue returns empty list."""
+        from voice.imessage_read import IMessageReader
+        reader = IMessageReader(_reader_config())
+        msgs = reader._drain_dashboard_queue()
+        self.assertEqual(msgs, [])
+
+    @patch("voice.imessage_read.IMessageReader._get_latest_rowid", return_value=0)
+    def test_wait_for_reply_picks_up_dashboard(self, mock_rowid):
+        """wait_for_reply should pick up dashboard messages."""
+        from voice.imessage_read import IMessageReader
+        reader = IMessageReader(_reader_config())
+        # No iMessages
+        reader._get_new_messages = MagicMock(return_value=[])
+        # Push a dashboard message
+        reader.push_dashboard_message("reply from web")
+
+        result = reader.wait_for_reply(timeout=1)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["content"], "reply from web")
+
+    @patch("voice.imessage_read.IMessageReader._get_latest_rowid", return_value=0)
+    def test_dashboard_takes_priority_over_empty_imessage(self, mock_rowid):
+        """Dashboard messages are checked before iMessage each cycle."""
+        from voice.imessage_read import IMessageReader
+        reader = IMessageReader(_reader_config())
+        reader._get_new_messages = MagicMock(return_value=[])
+        reader.push_dashboard_message("dashboard first")
+
+        result = reader.wait_for_reply(timeout=1)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["content"], "dashboard first")
+        # iMessage should NOT have been polled since dashboard had a message
+        reader._get_new_messages.assert_not_called()
+
+    @patch("voice.imessage_read.IMessageReader._get_latest_rowid", return_value=0)
+    def test_imessage_still_works_when_no_dashboard(self, mock_rowid):
+        """When no dashboard messages, iMessage is used as before."""
+        from voice.imessage_read import IMessageReader
+        reader = IMessageReader(_reader_config())
+        reader._get_new_messages = MagicMock(return_value=[
+            {"rowid": 1, "text": "imessage reply", "date": 1},
+        ])
+
+        result = reader.wait_for_reply(timeout=1)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["content"], "imessage reply")
+
+    @patch("voice.imessage_read.IMessageReader._get_latest_rowid", return_value=0)
+    def test_multiple_dashboard_messages_concatenated(self, mock_rowid):
+        """Multiple dashboard messages should be joined like iMessages."""
+        from voice.imessage_read import IMessageReader
+        reader = IMessageReader(_reader_config())
+        reader._get_new_messages = MagicMock(return_value=[])
+        reader.push_dashboard_message("part 1")
+        reader.push_dashboard_message("part 2")
+
+        result = reader.wait_for_reply(timeout=1)
+        self.assertTrue(result["success"])
+        self.assertIn("part 1", result["content"])
+        self.assertIn("part 2", result["content"])
+
+
 if __name__ == "__main__":
     unittest.main()

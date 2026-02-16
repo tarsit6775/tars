@@ -426,6 +426,20 @@ class TARSBrain:
         call_start = time.time()
 
         try:
+            # ── Debug: log message count and last message ──
+            hist_len = len(self.conversation_history)
+            if hist_len > 0:
+                last_msg = self.conversation_history[-1]
+                last_role = last_msg.get("role", "?")
+                last_content = last_msg.get("content", "")
+                if isinstance(last_content, str):
+                    content_preview = last_content[:100]
+                elif isinstance(last_content, list):
+                    content_preview = f"[{len(last_content)} blocks]"
+                else:
+                    content_preview = str(type(last_content))
+                print(f"  📡 LLM call: {hist_len} messages, last={last_role}: {content_preview}")
+
             # ── Try streaming first (for real-time dashboard) ──
             with self.client.stream(
                 model=model,
@@ -452,9 +466,15 @@ class TARSBrain:
             error_type = type(e).__name__
             print(f"  ⚠️ Brain LLM error ({error_type}): {error_str[:200]}")
 
-            # ── Non-retryable: API key / permission errors ──
-            if "API key expired" in error_str or "PERMISSION_DENIED" in error_str:
+            # ── API key / permission errors → try fallback before giving up ──
+            if "API key expired" in error_str or "PERMISSION_DENIED" in error_str or "leaked" in error_str.lower():
                 event_bus.emit("error", {"message": f"API key error: {error_str[:200]}"})
+                # Try fallback provider before giving up
+                if self._fallback_client and not self._using_fallback:
+                    print(f"  🔄 Primary API key revoked — failing over to fallback provider")
+                    result, new_model = self._failover_to_fallback(system_prompt, tools=tools)
+                    if result is not None:
+                        return result, new_model
                 self._emergency_notify(error_str)
                 return None, model
 
@@ -746,6 +766,7 @@ class TARSBrain:
         return {
             "type": "tool_result",
             "tool_use_id": block.id,
+            "tool_name": block.name,
             "content": result.get("content", str(result)),
         }
 

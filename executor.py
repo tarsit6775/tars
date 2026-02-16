@@ -219,8 +219,10 @@ class ToolExecutor:
             return self._deploy_agent("browser", inp["task"])
 
         elif tool_name == "web_search":
-            text = browser_google(inp["query"])
-            return {"success": True, "content": text if isinstance(text, str) else str(text)}
+            query = inp.get("query", "")
+            if not query:
+                return {"success": False, "error": True, "content": "⚠️ Missing 'query' parameter. Example: web_search({\"query\": \"weather in Miami\"})"}
+            return self._web_search(query)
 
         # ─── Direct Mac Control (brain-level) ──
         elif tool_name == "mac_mail":
@@ -260,6 +262,62 @@ class ToolExecutor:
 
         else:
             return {"success": False, "error": True, "content": f"Unknown tool: {tool_name}"}
+
+    def _web_search(self, query):
+        """Fast web search — HTTP-based DuckDuckGo, no browser needed.
+        
+        Uses lightweight HTTP scrape of DuckDuckGo HTML (< 5s) instead of
+        spinning up the full CDP browser which can hang.
+        """
+        import urllib.request
+        import urllib.parse
+        import re
+
+        # ── Fast path: DuckDuckGo HTML (no browser, no CAPTCHA) ──
+        try:
+            encoded = urllib.parse.quote_plus(query)
+            url = f"https://html.duckduckgo.com/html/?q={encoded}"
+            req = urllib.request.Request(url, headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+            })
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+            # Extract result snippets from DuckDuckGo HTML
+            snippets = re.findall(r'class="result__snippet">(.*?)</a>', html, re.S)
+            titles = re.findall(r'class="result__a"[^>]*>(.*?)</a>', html, re.S)
+            if snippets:
+                results = []
+                for i, (t, s) in enumerate(zip(titles, snippets), 1):
+                    t_clean = re.sub(r'<[^>]+>', '', t).strip()
+                    s_clean = re.sub(r'<[^>]+>', '', s).strip()
+                    results.append(f"{i}. {t_clean}\n   {s_clean}")
+                text = "\n\n".join(results[:10])
+                return {"success": True, "content": f"Search results for '{query}':\n\n{text}"}
+            # Fallback: strip all HTML
+            text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.S)
+            text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.S)
+            text = re.sub(r'<[^>]+>', ' ', text)
+            text = re.sub(r'\s+', ' ', text).strip()
+            if len(text) > 200:
+                return {"success": True, "content": f"Search results for '{query}':\n\n{text[:6000]}"}
+        except Exception as e:
+            print(f"    ⚠️ HTTP search failed ({e}), trying browser...")
+
+        # ── Slow fallback: CDP browser (with hard 30s timeout) ──
+        import concurrent.futures
+        def _browser_search():
+            return browser_google(query)
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_browser_search)
+                text = future.result(timeout=30)
+                return {"success": True, "content": text if isinstance(text, str) else str(text)}
+        except Exception as e2:
+            return {"success": False, "error": True, "content": f"Web search failed: {e2}"}
 
     def _scan_environment(self, checks):
         """

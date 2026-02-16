@@ -25,6 +25,10 @@ memory/context.md
 memory/preferences.md
 memory/projects/*
 !memory/projects/.gitkeep
+memory/decision_cache.json
+memory/error_patterns.json
+memory/threads/
+memory/agents/brain.json
 
 # ── Relay build artifact (committed by CI) ──
 # relay/static/ is committed by GitHub Actions after build

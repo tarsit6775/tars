@@ -21,6 +21,7 @@ from hands.browser import (
 )
 import time as _time
 import urllib.parse
+import urllib.request
 import json
 import re
 import math
@@ -886,13 +887,43 @@ class ResearchAgent(BaseAgent):
             print(f"  Research web_search timeout: {e}")
             with _browser_lock:
                 self._recover_browser()
-            return f"ERROR: Search timed out (browser recovered). Try again: {e}"
+            return self._http_search_fallback(query)
         except Exception as e:
             print(f"  Research web_search error: {e}")
             if "Not connected" in str(e) or "timeout" in str(e).lower():
                 with _browser_lock:
                     self._recover_browser()
-            return f"ERROR: Search failed: {e}"
+            return self._http_search_fallback(query)
+
+    def _http_search_fallback(self, query):
+        """Fast HTTP-based DuckDuckGo search when CDP browser hangs."""
+        import re as _re
+        try:
+            encoded = urllib.parse.quote_plus(query)
+            url = f"https://html.duckduckgo.com/html/?q={encoded}"
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            })
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+            snippets = _re.findall(r'class="result__snippet">(.*?)</a>', html, _re.S)
+            titles = _re.findall(r'class="result__a"[^>]*>(.*?)</a>', html, _re.S)
+            urls = _re.findall(r'class="result__url"[^>]*>(.*?)</a>', html, _re.S)
+            results = []
+            for i, (t, s) in enumerate(zip(titles, snippets), 1):
+                t_clean = _re.sub(r'<[^>]+>', '', t).strip()
+                s_clean = _re.sub(r'<[^>]+>', '', s).strip()
+                u_clean = _re.sub(r'<[^>]+>', '', urls[i-1]).strip() if i-1 < len(urls) else ""
+                results.append(f"{i}. **{t_clean}**\n   URL: {u_clean}\n   {s_clean}")
+                self._sources_visited.append((u_clean, t_clean, 50))
+            if results:
+                return f"## DuckDuckGo Search: '{query}' ({len(results)} results)\n\n" + "\n\n".join(results[:10])
+            # Raw fallback
+            text = _re.sub(r'<[^>]+>', ' ', html)
+            text = _re.sub(r'\s+', ' ', text).strip()
+            return f"## Search: '{query}' (raw)\n\n{text[:6000]}"
+        except Exception as e2:
+            return f"ERROR: Search failed (browser + HTTP fallback): {e2}"
 
     def _multi_search(self, queries):
         """Run multiple searches and combine results."""

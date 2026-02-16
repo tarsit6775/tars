@@ -47,7 +47,7 @@ class TestIMessageReaderDedup(unittest.TestCase):
 
         # Simulate: two polls return the same ROWID
         mock_cursor = MagicMock()
-        mock_cursor.fetchall.return_value = [(1, "hello", 0, 12345)]
+        mock_cursor.fetchall.return_value = [(1, "hello", 0, 12345, None)]
         mock_conn.return_value.__enter__ = MagicMock(return_value=MagicMock(execute=MagicMock(return_value=mock_cursor)))
         mock_conn.return_value.__exit__ = MagicMock(return_value=False)
 

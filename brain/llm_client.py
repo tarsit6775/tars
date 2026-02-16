@@ -3,8 +3,10 @@
 ║       TARS — LLM Client Abstraction      ║
 ╚══════════════════════════════════════════╝
 
-Unified client for Anthropic (Claude) and
-OpenAI-compatible APIs (Groq, Together, etc).
+Unified client for:
+  - Anthropic (Claude) — native SDK
+  - Gemini (Google) — native google-generativeai SDK
+  - OpenAI-compatible APIs (Groq, Together, etc)
 
 Normalizes responses so planner.py and
 browser_agent.py don't care which provider
@@ -16,6 +18,14 @@ import random
 import re
 import time as _time
 import uuid
+
+# Native Gemini SDK (google-generativeai)
+try:
+    import google.generativeai as genai
+    from google.generativeai import protos as _gemini_protos
+    _HAS_GEMINI = True
+except ImportError:
+    _HAS_GEMINI = False
 
 # ─────────────────────────────────────────────
 #  Normalized Response Objects
@@ -331,6 +341,200 @@ def _convert_history_for_openai(messages, system_prompt):
 
 
 # ─────────────────────────────────────────────
+#  Gemini-Native Format Conversion
+# ─────────────────────────────────────────────
+
+def _schema_dict_to_proto(schema_dict):
+    """
+    Recursively convert a JSON Schema dict into a genai.protos.Schema.
+
+    Handles type, description, properties, required, items, and enum.
+    """
+    type_map = {
+        "string": _gemini_protos.Type.STRING,
+        "number": _gemini_protos.Type.NUMBER,
+        "integer": _gemini_protos.Type.INTEGER,
+        "boolean": _gemini_protos.Type.BOOLEAN,
+        "array": _gemini_protos.Type.ARRAY,
+        "object": _gemini_protos.Type.OBJECT,
+    }
+
+    kwargs = {}
+    json_type = schema_dict.get("type", "string")
+    kwargs["type"] = type_map.get(json_type, _gemini_protos.Type.STRING)
+
+    if "description" in schema_dict:
+        kwargs["description"] = schema_dict["description"]
+
+    if "enum" in schema_dict:
+        kwargs["enum"] = schema_dict["enum"]
+
+    if "properties" in schema_dict:
+        kwargs["properties"] = {
+            k: _schema_dict_to_proto(v)
+            for k, v in schema_dict["properties"].items()
+        }
+
+    if "required" in schema_dict:
+        kwargs["required"] = schema_dict["required"]
+
+    if "items" in schema_dict:
+        kwargs["items"] = _schema_dict_to_proto(schema_dict["items"])
+
+    return _gemini_protos.Schema(**kwargs)
+
+
+def _anthropic_to_gemini_tools(tools):
+    """
+    Convert Anthropic tool schemas → list of genai.protos.Tool.
+
+    Returns a single Tool containing all FunctionDeclarations.
+    """
+    if not tools:
+        return None
+
+    declarations = []
+    for tool in tools:
+        schema = tool.get("input_schema", {"type": "object", "properties": {}})
+        if "properties" not in schema:
+            schema["properties"] = {}
+
+        params_proto = _schema_dict_to_proto(schema)
+
+        declarations.append(_gemini_protos.FunctionDeclaration(
+            name=tool["name"],
+            description=tool.get("description", ""),
+            parameters=params_proto,
+        ))
+
+    return [_gemini_protos.Tool(function_declarations=declarations)]
+
+
+def _convert_history_for_gemini(messages, system_prompt):
+    """
+    Convert Anthropic-style conversation history → Gemini Content list.
+
+    Anthropic uses:
+      - role "user" with string content or list of tool_result dicts
+      - role "assistant" with list of ContentBlock objects (text, tool_use)
+
+    Gemini uses:
+      - role "user" with Parts (text)
+      - role "model" with Parts (text, function_call)
+      - role "user" with Parts (function_response) for tool results
+
+    Note: system_prompt is passed separately via GenerativeModel, not in history.
+    """
+    gemini_contents = []
+
+    for msg in messages:
+        role = msg["role"]
+        content = msg["content"]
+
+        if role == "user":
+            if isinstance(content, str):
+                gemini_contents.append(_gemini_protos.Content(
+                    role="user",
+                    parts=[_gemini_protos.Part(text=content)],
+                ))
+            elif isinstance(content, list):
+                # Tool results → function_response parts
+                parts = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "tool_result":
+                        result_content = item.get("content", "")
+                        # Gemini expects function_response content as a dict
+                        if isinstance(result_content, str):
+                            response_dict = {"result": result_content}
+                        elif isinstance(result_content, dict):
+                            response_dict = result_content
+                        else:
+                            response_dict = {"result": str(result_content)}
+
+                        parts.append(_gemini_protos.Part(
+                            function_response=_gemini_protos.FunctionResponse(
+                                name=item.get("tool_name", "unknown"),
+                                response=response_dict,
+                            )
+                        ))
+                if parts:
+                    gemini_contents.append(_gemini_protos.Content(
+                        role="user",
+                        parts=parts,
+                    ))
+
+        elif role == "assistant":
+            parts = []
+            if isinstance(content, str):
+                parts.append(_gemini_protos.Part(text=content))
+            elif isinstance(content, list):
+                for block in content:
+                    # ContentBlock objects
+                    if hasattr(block, "type"):
+                        if block.type == "text" and block.text:
+                            parts.append(_gemini_protos.Part(text=block.text))
+                        elif block.type == "tool_use":
+                            args = block.input if isinstance(block.input, dict) else {}
+                            parts.append(_gemini_protos.Part(
+                                function_call=_gemini_protos.FunctionCall(
+                                    name=block.name,
+                                    args=args,
+                                )
+                            ))
+                    # Raw dicts
+                    elif isinstance(block, dict):
+                        if block.get("type") == "text":
+                            parts.append(_gemini_protos.Part(text=block.get("text", "")))
+                        elif block.get("type") == "tool_use":
+                            parts.append(_gemini_protos.Part(
+                                function_call=_gemini_protos.FunctionCall(
+                                    name=block.get("name", ""),
+                                    args=block.get("input", {}),
+                                )
+                            ))
+            if parts:
+                gemini_contents.append(_gemini_protos.Content(
+                    role="model",
+                    parts=parts,
+                ))
+
+    return gemini_contents
+
+
+def _gemini_response_to_normalized(response):
+    """Convert a native Gemini response to our normalized LLMResponse."""
+    blocks = []
+    has_tool_calls = False
+
+    if response.candidates:
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, "function_call") and part.function_call.name:
+                has_tool_calls = True
+                fc = part.function_call
+                args = dict(fc.args) if fc.args else {}
+                call_id = f"call_{uuid.uuid4().hex[:24]}"
+                blocks.append(ContentBlock(
+                    "tool_use",
+                    name=fc.name,
+                    input_data=args,
+                    block_id=call_id,
+                ))
+            elif hasattr(part, "text") and part.text:
+                blocks.append(ContentBlock("text", text=part.text))
+
+    stop_reason = "tool_use" if has_tool_calls else "end_turn"
+
+    usage = Usage()
+    if hasattr(response, "usage_metadata") and response.usage_metadata:
+        usage = Usage(
+            input_tokens=getattr(response.usage_metadata, "prompt_token_count", 0),
+            output_tokens=getattr(response.usage_metadata, "candidates_token_count", 0),
+        )
+
+    return LLMResponse(content=blocks, stop_reason=stop_reason, usage=usage)
+
+
+# ─────────────────────────────────────────────
 #  Streaming Wrapper
 # ─────────────────────────────────────────────
 
@@ -339,17 +543,18 @@ class OpenAIStreamWrapper:
     Wraps OpenAI streaming to match the interface planner.py expects.
     Collects the full response while yielding stream events.
     """
-    def __init__(self, client, **kwargs):
+    def __init__(self, client, provider=None, **kwargs):
         self._client = client
+        self._provider = provider
         self._kwargs = kwargs
         self._final_response = None
 
     def __enter__(self):
-        self._stream = self._client.chat.completions.create(
-            stream=True,
-            stream_options={"include_usage": True},
-            **self._kwargs,
-        )
+        create_kwargs = dict(stream=True, **self._kwargs)
+        # Gemini's OpenAI compat endpoint doesn't support stream_options
+        if self._provider != "gemini":
+            create_kwargs["stream_options"] = {"include_usage": True}
+        self._stream = self._client.chat.completions.create(**create_kwargs)
         self._collected_text = ""
         self._collected_tool_calls = {}  # index -> {id, name, arguments}
         self._usage = Usage()
@@ -412,13 +617,17 @@ class OpenAIStreamWrapper:
             blocks.append(ContentBlock("text", text=self._collected_text))
 
         has_tools = False
-        for idx in sorted(self._collected_tool_calls.keys()):
+        for idx in sorted(self._collected_tool_calls.keys(), key=lambda x: x if x is not None else -1):
             tc = self._collected_tool_calls[idx]
             has_tools = True
             try:
                 args = json.loads(tc["arguments"]) if tc["arguments"] else {}
             except json.JSONDecodeError:
                 args = {}
+            if not args and tc["arguments"]:
+                print(f"    ⚠️ Tool call '{tc['name']}' had arguments '{tc['arguments']}' but parsed to empty dict")
+            elif not args:
+                print(f"    ⚠️ Tool call '{tc['name']}' received empty arguments from LLM")
             blocks.append(ContentBlock(
                 "tool_use",
                 name=tc["name"],
@@ -442,7 +651,167 @@ class _Delta:
 
 
 # ─────────────────────────────────────────────
-#  Retry-Aware Stream Wrapper
+#  Gemini Native Stream Wrapper
+# ─────────────────────────────────────────────
+
+class GeminiStreamWrapper:
+    """
+    Wraps Gemini's native streaming to match the interface planner.py expects.
+    
+    Native Gemini streaming returns proper separate function_call parts
+    for each tool call — no concatenation bugs like the OpenAI compat layer.
+    """
+    def __init__(self, model, contents, generation_config=None, tools=None):
+        self._model = model
+        self._contents = contents
+        self._generation_config = generation_config
+        self._tools = tools
+        self._collected_text = ""
+        self._collected_tool_calls = []
+        self._usage = Usage()
+
+    def __enter__(self):
+        kwargs = {"stream": True}
+        if self._generation_config:
+            kwargs["generation_config"] = self._generation_config
+        self._stream = self._model.generate_content(
+            self._contents,
+            **kwargs,
+        )
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def __iter__(self):
+        for chunk in self._stream:
+            # Extract usage from streaming chunks
+            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                self._usage = Usage(
+                    input_tokens=getattr(chunk.usage_metadata, "prompt_token_count", 0),
+                    output_tokens=getattr(chunk.usage_metadata, "candidates_token_count", 0),
+                )
+
+            if not chunk.candidates:
+                continue
+
+            for part in chunk.candidates[0].content.parts:
+                if hasattr(part, "function_call") and part.function_call.name:
+                    fc = part.function_call
+                    args = dict(fc.args) if fc.args else {}
+                    call_id = f"call_{uuid.uuid4().hex[:24]}"
+                    self._collected_tool_calls.append({
+                        "name": fc.name,
+                        "args": args,
+                        "id": call_id,
+                    })
+                elif hasattr(part, "text") and part.text:
+                    self._collected_text += part.text
+                    yield _StreamEvent(part.text)
+
+    def get_final_message(self):
+        """Build the normalized response from collected stream data."""
+        blocks = []
+
+        if self._collected_text:
+            blocks.append(ContentBlock("text", text=self._collected_text))
+
+        has_tools = bool(self._collected_tool_calls)
+        for tc in self._collected_tool_calls:
+            blocks.append(ContentBlock(
+                "tool_use",
+                name=tc["name"],
+                input_data=tc["args"],
+                block_id=tc["id"],
+            ))
+
+        stop_reason = "tool_use" if has_tools else "end_turn"
+        return LLMResponse(content=blocks, stop_reason=stop_reason, usage=self._usage)
+
+
+class GeminiRetryStreamWrapper:
+    """
+    Wraps GeminiStreamWrapper with automatic retry on transient errors.
+    Same interface as RetryStreamWrapper but for native Gemini SDK.
+    """
+    def __init__(self, model, contents, backoff_fn, max_retries=5, generation_config=None, tools=None):
+        self._model = model
+        self._contents = contents
+        self._backoff_fn = backoff_fn
+        self._max_retries = max_retries
+        self._generation_config = generation_config
+        self._tools = tools
+        self._inner = None
+
+    def __enter__(self):
+        last_error = None
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                self._inner = GeminiStreamWrapper(
+                    self._model, self._contents,
+                    generation_config=self._generation_config,
+                    tools=self._tools,
+                )
+                self._inner.__enter__()
+                self._inner._retry_attempt = attempt
+                return self
+            except Exception as e:
+                last_error = e
+                if self._is_retryable(e) and attempt < self._max_retries:
+                    delay = self._get_delay(e, attempt)
+                    print(f"    ⏳ Gemini stream error ({type(e).__name__}) — retry {attempt}/{self._max_retries} in {delay:.1f}s")
+                    _time.sleep(delay)
+                    continue
+                raise
+        raise last_error
+
+    def __exit__(self, *args):
+        if self._inner:
+            self._inner.__exit__(*args)
+
+    def __iter__(self):
+        try:
+            yield from self._inner
+        except Exception as e:
+            if self._is_retryable(e):
+                attempt = getattr(self._inner, '_retry_attempt', 1)
+                if attempt < self._max_retries:
+                    delay = self._get_delay(e, attempt)
+                    print(f"    ⏳ Gemini mid-stream error ({type(e).__name__}) — retry {attempt}/{self._max_retries} in {delay:.1f}s")
+                    _time.sleep(delay)
+                    self._inner = GeminiStreamWrapper(
+                        self._model, self._contents,
+                        generation_config=self._generation_config,
+                        tools=self._tools,
+                    )
+                    self._inner.__enter__()
+                    self._inner._retry_attempt = attempt + 1
+                    yield from self._inner
+                    return
+            raise
+
+    def get_final_message(self):
+        return self._inner.get_final_message()
+
+    def _is_retryable(self, error):
+        error_str = str(error).lower()
+        return any(marker in error_str for marker in (
+            "rate_limit", "rate limit", "429",
+            "500", "502", "503", "529",
+            "overloaded", "capacity", "resource_exhausted",
+            "connection", "timeout", "timed out",
+            "service unavailable", "internal server error",
+        ))
+
+    def _get_delay(self, error, attempt):
+        error_str = str(error).lower()
+        if any(m in error_str for m in ("rate_limit", "rate limit", "429", "resource_exhausted")):
+            return self._backoff_fn(attempt, base=2.0, cap=90.0)
+        return self._backoff_fn(attempt, base=1.0, cap=30.0)
+
+
+# ─────────────────────────────────────────────
+#  Retry-Aware Stream Wrapper (OpenAI-compat)
 #  (Retries the ENTIRE streaming request on
 #   rate limits, 5xx, connection errors)
 # ─────────────────────────────────────────────
@@ -459,18 +828,19 @@ class RetryStreamWrapper:
     From the caller's perspective, this is transparent — same
     context-manager + iterator interface as OpenAIStreamWrapper.
     """
-    def __init__(self, client, backoff_fn, max_retries=5, **kwargs):
+    def __init__(self, client, backoff_fn, max_retries=5, provider=None, **kwargs):
         self._client = client
         self._kwargs = kwargs
         self._backoff_fn = backoff_fn
         self._max_retries = max_retries
+        self._provider = provider
         self._inner = None
 
     def __enter__(self):
         last_error = None
         for attempt in range(1, self._max_retries + 1):
             try:
-                self._inner = OpenAIStreamWrapper(self._client, **self._kwargs)
+                self._inner = OpenAIStreamWrapper(self._client, provider=self._provider, **self._kwargs)
                 self._inner.__enter__()
                 # Wrap iteration to catch mid-stream errors
                 self._inner._retry_attempt = attempt
@@ -501,7 +871,7 @@ class RetryStreamWrapper:
                     print(f"    ⏳ Mid-stream error ({type(e).__name__}) — retry {attempt}/{self._max_retries} in {delay:.1f}s")
                     _time.sleep(delay)
                     # Restart the stream from scratch
-                    self._inner = OpenAIStreamWrapper(self._client, **self._kwargs)
+                    self._inner = OpenAIStreamWrapper(self._client, provider=self._provider, **self._kwargs)
                     self._inner.__enter__()
                     self._inner._retry_attempt = attempt + 1
                     yield from self._inner
@@ -540,6 +910,7 @@ class LLMClient:
     """
     Unified LLM client. Supports:
       - provider: "anthropic" → uses anthropic SDK
+      - provider: "gemini" → uses native google-generativeai SDK
       - provider: "groq" / "together" / "openai" / "openrouter"
           → uses openai SDK with custom base_url
 
@@ -551,7 +922,6 @@ class LLMClient:
         "together": "https://api.together.xyz/v1",
         "openrouter": "https://openrouter.ai/api/v1",
         "openai": "https://api.openai.com/v1",
-        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "deepseek": "https://api.deepseek.com/v1",
     }
 
@@ -563,11 +933,20 @@ class LLMClient:
             import anthropic
             self._client = anthropic.Anthropic(api_key=api_key)
             self._mode = "anthropic"
+        elif provider == "gemini":
+            if not _HAS_GEMINI:
+                raise ImportError(
+                    "google-generativeai is required for Gemini provider. "
+                    "Install it: pip install google-generativeai"
+                )
+            genai.configure(api_key=api_key)
+            self._client = genai  # module reference for model creation
+            self._mode = "gemini"
         else:
             from openai import OpenAI
             base_url = kwargs.get("base_url") or self.PROVIDER_URLS.get(provider)
             if not base_url:
-                raise ValueError(f"Unknown provider '{provider}'. Use: anthropic, groq, together, openrouter, openai — or pass base_url=")
+                raise ValueError(f"Unknown provider '{provider}'. Use: anthropic, gemini, groq, together, openrouter, openai — or pass base_url=")
             self._client = OpenAI(api_key=api_key, base_url=base_url)
             self._mode = "openai"
 
@@ -603,6 +982,48 @@ class LLMClient:
                 temperature=temperature,
             )
             return self._wrap_anthropic_response(resp)
+        elif self._mode == "gemini":
+            # ── Native Gemini SDK path ──
+            gemini_tools = _anthropic_to_gemini_tools(tools)
+            gemini_contents = _convert_history_for_gemini(messages, system)
+
+            gemini_model = genai.GenerativeModel(
+                model,
+                tools=gemini_tools,
+                system_instruction=system,
+            )
+
+            gen_config = {}
+            if max_tokens:
+                gen_config["max_output_tokens"] = max_tokens
+            gen_config["temperature"] = temperature
+
+            max_retries = 5
+            for attempt in range(1, max_retries + 1):
+                try:
+                    resp = gemini_model.generate_content(
+                        gemini_contents,
+                        generation_config=gen_config if gen_config else None,
+                    )
+                    return _gemini_response_to_normalized(resp)
+                except Exception as e:
+                    error_str = str(e).lower()
+
+                    # Rate limit / resource exhausted
+                    if any(m in error_str for m in ("rate_limit", "rate limit", "429", "resource_exhausted")) and attempt < max_retries:
+                        delay = self._backoff_delay(attempt, base=2.0, cap=60.0)
+                        print(f"    ⏳ Gemini rate limited — retry {attempt}/{max_retries} in {delay:.1f}s")
+                        _time.sleep(delay)
+                        continue
+
+                    # Server errors
+                    if any(code in error_str for code in ("500", "502", "503", "529")) and attempt < max_retries:
+                        delay = self._backoff_delay(attempt, base=1.0, cap=30.0)
+                        print(f"    ⏳ Gemini server error — retry {attempt}/{max_retries} in {delay:.1f}s")
+                        _time.sleep(delay)
+                        continue
+
+                    raise
         else:
             openai_tools = _anthropic_to_openai_tools(tools)
             openai_messages = _convert_history_for_openai(messages, system)
@@ -671,6 +1092,30 @@ class LLMClient:
             if temperature is not None:
                 kwargs["temperature"] = temperature
             return self._client.messages.stream(**kwargs)
+        elif self._mode == "gemini":
+            # ── Native Gemini SDK streaming ──
+            gemini_tools = _anthropic_to_gemini_tools(tools)
+            gemini_contents = _convert_history_for_gemini(messages, system)
+
+            gemini_model = genai.GenerativeModel(
+                model,
+                tools=gemini_tools,
+                system_instruction=system,
+            )
+
+            gen_config = {}
+            if max_tokens:
+                gen_config["max_output_tokens"] = max_tokens
+            if temperature is not None:
+                gen_config["temperature"] = temperature
+
+            return GeminiRetryStreamWrapper(
+                gemini_model,
+                gemini_contents,
+                self._backoff_delay,
+                generation_config=gen_config if gen_config else None,
+                tools=gemini_tools,
+            )
         else:
             openai_tools = _anthropic_to_openai_tools(tools)
             openai_messages = _convert_history_for_openai(messages, system)
@@ -682,7 +1127,7 @@ class LLMClient:
             )
             if temperature is not None:
                 kwargs["temperature"] = temperature
-            return RetryStreamWrapper(self._client, self._backoff_delay, **kwargs)
+            return RetryStreamWrapper(self._client, self._backoff_delay, provider=self.provider, **kwargs)
 
     # ── Helper ──
 

@@ -215,10 +215,13 @@ class TARSBrain:
         # ── Step 12: Record response in thread ──
         self.threads.record_response(response[:500])
 
-        # ── Step 13: Proactive anticipation (Phase 29) ──
+        # ── Step 13: Record brain-level task outcome for self-improvement ──
+        self._record_brain_outcome(text, response, intent)
+
+        # ── Step 14: Proactive anticipation (Phase 29) ──
         self._proactive_check(text, response, intent)
 
-        # ── Step 14: Save session state (Phase 33) ──
+        # ── Step 15: Save session state (Phase 33) ──
         self._save_session_state()
 
         return response
@@ -307,19 +310,22 @@ class TARSBrain:
 
             # Phase 34: MetaCognition check every iteration
             metacog = self.metacognition.analyze()
-            if metacog:
-                injection = self.metacognition.get_injection()
-                if injection:
-                    self.conversation_history.append({
-                        "role": "user",
-                        "content": injection,
-                    })
-                    self._reasoning_trace.append({
-                        "step": self._tool_loop_count,
-                        "type": "metacognition",
-                        "alert": metacog.get("alerts", []),
-                    })
-                    event_bus.emit("metacognition_alert", metacog)
+            injection = self.metacognition.get_injection()
+            if injection:
+                self.conversation_history.append({
+                    "role": "user",
+                    "content": injection,
+                })
+                self._reasoning_trace.append({
+                    "step": self._tool_loop_count,
+                    "type": "metacognition",
+                    "alert": metacog.recommendation or "",
+                })
+                event_bus.emit("metacognition_alert", {
+                    "is_looping": metacog.is_looping,
+                    "is_stalled": metacog.is_stalled,
+                    "recommendation": metacog.recommendation,
+                })
 
             # ── Call LLM (with error handling + failover) ──
             response, model = self._call_llm(system_prompt, model, tools=tools)
@@ -755,10 +761,7 @@ class TARSBrain:
             full_memory_context = f"{full_memory_context}\n\n## Auto-recalled for this message\n{memory_context}"
 
         # Phase 34: Metacognition context
-        metacog_context = ""
-        metacog_state = self.metacognition.analyze()
-        if metacog_state and metacog_state.get("alerts"):
-            metacog_context = self.metacognition.get_injection()
+        metacog_context = self.metacognition.get_injection() or ""
 
         return build_system_prompt(
             humor_level=self.config["agent"]["humor_level"],
@@ -998,10 +1001,13 @@ class TARSBrain:
     def get_thread_stats(self) -> dict:
         """Get thread statistics for the dashboard."""
         stats = self.threads.get_thread_stats()
+        metacog_stats = self.metacognition.get_stats()
         stats["metacognition"] = {
-            "total_tool_calls": self.metacognition.state.total_tool_calls,
-            "total_failures": self.metacognition.state.total_failures,
-            "alerts": self.metacognition.state.alerts,
+            "total_tool_calls": metacog_stats.get("total_steps", 0),
+            "total_failures": metacog_stats.get("consecutive_failures", 0),
+            "is_looping": metacog_stats.get("is_looping", False),
+            "is_stalled": metacog_stats.get("is_stalled", False),
+            "confidence_trend": metacog_stats.get("confidence_trend", "stable"),
         }
         stats["decision_cache_size"] = len(self.decision_cache._entries)
         stats["error_patterns"] = len(self._error_patterns)
@@ -1059,8 +1065,11 @@ class TARSBrain:
             return ""
 
         # Record subtasks in thread
-        for i, st in enumerate(subtasks):
-            self.threads.add_subtask(st[:200], priority=len(subtasks) - i)
+        subtask_dicts = [
+            {"description": st[:200], "agent": "auto", "depends_on": []}
+            for st in subtasks
+        ]
+        self.threads.add_subtasks(subtask_dicts)
 
         plan = "## Task Breakdown\n"
         for i, st in enumerate(subtasks, 1):
@@ -1079,20 +1088,22 @@ class TARSBrain:
         Post-task structured reflection — learns from what just happened.
         """
         try:
-            metacog_state = self.metacognition.state
+            metacog_stats = self.metacognition.get_stats()
+            total_steps = metacog_stats.get("total_steps", 0)
+            total_failures = metacog_stats.get("consecutive_failures", 0)
             reflection = {
                 "task": task[:200],
                 "loops": self._tool_loop_count,
-                "total_tool_calls": metacog_state.total_tool_calls,
-                "failures": metacog_state.total_failures,
-                "alerts": list(metacog_state.alerts),
+                "total_tool_calls": total_steps,
+                "failures": total_failures,
+                "is_looping": metacog_stats.get("is_looping", False),
                 "intent": intent.type if intent else "unknown",
                 "response_length": len(response),
                 "timestamp": datetime.now().isoformat(),
             }
 
             # Determine efficiency
-            if metacog_state.total_failures > metacog_state.total_tool_calls * 0.5:
+            if total_failures > total_steps * 0.5:
                 reflection["quality"] = "poor"
                 event_bus.emit("reflection", {
                     "quality": "poor",
@@ -1128,6 +1139,41 @@ class TARSBrain:
         except Exception as e:
             print(f"  ⚠️ Reflection error: {e}")
 
+    def _record_brain_outcome(self, task, response, intent):
+        """
+        Record brain-level task outcome to SelfImproveEngine.
+
+        This closes the self-improvement loop: agent-level outcomes are
+        recorded by executor._deploy_agent(), but brain-level orchestration
+        outcomes were never tracked. Now they are.
+        """
+        try:
+            if not hasattr(self.tool_executor, 'self_improve'):
+                return
+
+            metacog_stats = self.metacognition.get_stats()
+            success = (
+                not response.startswith("❌") and
+                not response.startswith("⚠️") and
+                metacog_stats.get("consecutive_failures", 0) < 3
+            )
+
+            result = {
+                "success": success,
+                "content": response[:500],
+                "steps": self._tool_loop_count,
+                "stuck": metacog_stats.get("is_stalled", False),
+                "stuck_reason": metacog_stats.get("stall_reason", "") if metacog_stats.get("is_stalled") else "",
+            }
+
+            self.tool_executor.self_improve.record_task_outcome(
+                agent_name="brain",
+                task=task[:200],
+                result=result,
+            )
+        except Exception as e:
+            print(f"  ⚠️ Brain outcome recording error: {e}")
+
     # ═══════════════════════════════════════════════════
     #  PROACTIVE ANTICIPATION (Phase 29)
     # ═══════════════════════════════════════════════════
@@ -1139,7 +1185,7 @@ class TARSBrain:
         """
         try:
             # If task involved code changes, anticipate testing
-            code_tools = {"run_command", "write_file", "code_task"}
+            code_tools = {"run_quick_command", "deploy_coder_agent", "deploy_file_agent"}
             trace_tools = set()
             for t in self._reasoning_trace:
                 if t.get("type") == "tool_calls":

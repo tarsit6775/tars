@@ -5,7 +5,7 @@
 
 Unified client for:
   - Anthropic (Claude) — native SDK
-  - Gemini (Google) — native google-generativeai SDK
+  - Gemini (Google) — google-genai SDK (new, pydantic-based)
   - OpenAI-compatible APIs (Groq, Together, etc)
 
 Normalizes responses so planner.py and
@@ -14,17 +14,22 @@ is behind the scenes.
 """
 
 import json
+import logging
 import random
 import re
 import time as _time
 import uuid
 
-# Native Gemini SDK (google-generativeai)
+logger = logging.getLogger("tars.llm_client")
+
+# New Google GenAI SDK (google-genai)
 try:
-    import google.generativeai as genai
-    from google.generativeai import protos as _gemini_protos
+    from google import genai as _genai_module
+    from google.genai import types as _genai_types
     _HAS_GEMINI = True
 except ImportError:
+    _genai_module = None
+    _genai_types = None
     _HAS_GEMINI = False
 
 # ─────────────────────────────────────────────
@@ -32,10 +37,9 @@ except ImportError:
 # ─────────────────────────────────────────────
 
 def _proto_to_python(obj):
-    """Recursively convert protobuf MapComposite/RepeatedComposite to plain Python.
+    """Recursively convert pydantic/protobuf objects to plain Python dicts/lists.
     
-    Gemini's fc.args returns protobuf wrappers that look like dicts/lists
-    but crash on json.dumps(). This deep-converts everything.
+    Ensures fc.args values are json-serializable plain Python types.
     """
     if isinstance(obj, dict):
         return {k: _proto_to_python(v) for k, v in obj.items()}
@@ -254,7 +258,7 @@ def _parse_failed_tool_call(error):
                     cleaned = cleaned.replace('\\"', '"')
                     args = json.loads(cleaned)
                 except json.JSONDecodeError:
-                    print(f"    ⚠️ [Parser] Could not parse args: {args_raw[:200]}")
+                    logger.warning(f"[Parser] Could not parse args: {args_raw[:200]}")
                     pass
 
         call_id = f"call_{uuid.uuid4().hex[:24]}"
@@ -268,7 +272,7 @@ def _parse_failed_tool_call(error):
     if not any(b.type == "tool_use" for b in blocks):
         return None
 
-    print(f"    🔧 [LLM Client] Recovered {len(calls)} malformed tool call(s): {[c[0] for c in calls]}")
+    logger.info(f"Recovered {len(calls)} malformed tool call(s): {[c[0] for c in calls]}")
 
     return LLMResponse(
         content=blocks,
@@ -366,24 +370,24 @@ def _convert_history_for_openai(messages, system_prompt):
 #  Gemini-Native Format Conversion
 # ─────────────────────────────────────────────
 
-def _schema_dict_to_proto(schema_dict):
+def _schema_dict_to_genai(schema_dict):
     """
-    Recursively convert a JSON Schema dict into a genai.protos.Schema.
+    Recursively convert a JSON Schema dict into a google.genai types.Schema.
 
     Handles type, description, properties, required, items, and enum.
     """
     type_map = {
-        "string": _gemini_protos.Type.STRING,
-        "number": _gemini_protos.Type.NUMBER,
-        "integer": _gemini_protos.Type.INTEGER,
-        "boolean": _gemini_protos.Type.BOOLEAN,
-        "array": _gemini_protos.Type.ARRAY,
-        "object": _gemini_protos.Type.OBJECT,
+        "string": _genai_types.Type.STRING,
+        "number": _genai_types.Type.NUMBER,
+        "integer": _genai_types.Type.INTEGER,
+        "boolean": _genai_types.Type.BOOLEAN,
+        "array": _genai_types.Type.ARRAY,
+        "object": _genai_types.Type.OBJECT,
     }
 
     kwargs = {}
     json_type = schema_dict.get("type", "string")
-    kwargs["type"] = type_map.get(json_type, _gemini_protos.Type.STRING)
+    kwargs["type"] = type_map.get(json_type, _genai_types.Type.STRING)
 
     if "description" in schema_dict:
         kwargs["description"] = schema_dict["description"]
@@ -393,7 +397,7 @@ def _schema_dict_to_proto(schema_dict):
 
     if "properties" in schema_dict:
         kwargs["properties"] = {
-            k: _schema_dict_to_proto(v)
+            k: _schema_dict_to_genai(v)
             for k, v in schema_dict["properties"].items()
         }
 
@@ -401,14 +405,14 @@ def _schema_dict_to_proto(schema_dict):
         kwargs["required"] = schema_dict["required"]
 
     if "items" in schema_dict:
-        kwargs["items"] = _schema_dict_to_proto(schema_dict["items"])
+        kwargs["items"] = _schema_dict_to_genai(schema_dict["items"])
 
-    return _gemini_protos.Schema(**kwargs)
+    return _genai_types.Schema(**kwargs)
 
 
 def _anthropic_to_gemini_tools(tools):
     """
-    Convert Anthropic tool schemas → list of genai.protos.Tool.
+    Convert Anthropic tool schemas → list of google.genai types.Tool.
 
     Returns a single Tool containing all FunctionDeclarations.
     """
@@ -421,15 +425,15 @@ def _anthropic_to_gemini_tools(tools):
         if "properties" not in schema:
             schema["properties"] = {}
 
-        params_proto = _schema_dict_to_proto(schema)
+        params_schema = _schema_dict_to_genai(schema)
 
-        declarations.append(_gemini_protos.FunctionDeclaration(
+        declarations.append(_genai_types.FunctionDeclaration(
             name=tool["name"],
             description=tool.get("description", ""),
-            parameters=params_proto,
+            parameters=params_schema,
         ))
 
-    return [_gemini_protos.Tool(function_declarations=declarations)]
+    return [_genai_types.Tool(function_declarations=declarations)]
 
 
 def _convert_history_for_gemini(messages, system_prompt):
@@ -445,7 +449,7 @@ def _convert_history_for_gemini(messages, system_prompt):
       - role "model" with Parts (text, function_call)
       - role "user" with Parts (function_response) for tool results
 
-    Note: system_prompt is passed separately via GenerativeModel, not in history.
+    Note: system_prompt is passed separately via GenerateContentConfig, not in history.
     """
     gemini_contents = []
 
@@ -455,9 +459,9 @@ def _convert_history_for_gemini(messages, system_prompt):
 
         if role == "user":
             if isinstance(content, str):
-                gemini_contents.append(_gemini_protos.Content(
+                gemini_contents.append(_genai_types.Content(
                     role="user",
-                    parts=[_gemini_protos.Part(text=content)],
+                    parts=[_genai_types.Part(text=content)],
                 ))
             elif isinstance(content, list):
                 # Tool results → function_response parts
@@ -473,14 +477,14 @@ def _convert_history_for_gemini(messages, system_prompt):
                         else:
                             response_dict = {"result": str(result_content)}
 
-                        parts.append(_gemini_protos.Part(
-                            function_response=_gemini_protos.FunctionResponse(
+                        parts.append(_genai_types.Part(
+                            function_response=_genai_types.FunctionResponse(
                                 name=item.get("tool_name", "unknown"),
                                 response=response_dict,
                             )
                         ))
                 if parts:
-                    gemini_contents.append(_gemini_protos.Content(
+                    gemini_contents.append(_genai_types.Content(
                         role="user",
                         parts=parts,
                     ))
@@ -488,17 +492,17 @@ def _convert_history_for_gemini(messages, system_prompt):
         elif role == "assistant":
             parts = []
             if isinstance(content, str):
-                parts.append(_gemini_protos.Part(text=content))
+                parts.append(_genai_types.Part(text=content))
             elif isinstance(content, list):
                 for block in content:
                     # ContentBlock objects
                     if hasattr(block, "type"):
                         if block.type == "text" and block.text:
-                            parts.append(_gemini_protos.Part(text=block.text))
+                            parts.append(_genai_types.Part(text=block.text))
                         elif block.type == "tool_use":
                             args = block.input if isinstance(block.input, dict) else {}
-                            parts.append(_gemini_protos.Part(
-                                function_call=_gemini_protos.FunctionCall(
+                            parts.append(_genai_types.Part(
+                                function_call=_genai_types.FunctionCall(
                                     name=block.name,
                                     args=args,
                                 )
@@ -506,16 +510,16 @@ def _convert_history_for_gemini(messages, system_prompt):
                     # Raw dicts
                     elif isinstance(block, dict):
                         if block.get("type") == "text":
-                            parts.append(_gemini_protos.Part(text=block.get("text", "")))
+                            parts.append(_genai_types.Part(text=block.get("text", "")))
                         elif block.get("type") == "tool_use":
-                            parts.append(_gemini_protos.Part(
-                                function_call=_gemini_protos.FunctionCall(
+                            parts.append(_genai_types.Part(
+                                function_call=_genai_types.FunctionCall(
                                     name=block.get("name", ""),
                                     args=block.get("input", {}),
                                 )
                             ))
             if parts:
-                gemini_contents.append(_gemini_protos.Content(
+                gemini_contents.append(_genai_types.Content(
                     role="model",
                     parts=parts,
                 ))
@@ -524,33 +528,35 @@ def _convert_history_for_gemini(messages, system_prompt):
 
 
 def _gemini_response_to_normalized(response):
-    """Convert a native Gemini response to our normalized LLMResponse."""
+    """Convert a google.genai response to our normalized LLMResponse."""
     blocks = []
     has_tool_calls = False
 
     if response.candidates:
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, "function_call") and part.function_call.name:
-                has_tool_calls = True
-                fc = part.function_call
-                args = _proto_to_python(dict(fc.args)) if fc.args else {}
-                call_id = f"call_{uuid.uuid4().hex[:24]}"
-                blocks.append(ContentBlock(
-                    "tool_use",
-                    name=fc.name,
-                    input_data=args,
-                    block_id=call_id,
-                ))
-            elif hasattr(part, "text") and part.text:
-                blocks.append(ContentBlock("text", text=part.text))
+        candidate = response.candidates[0]
+        if candidate.content and candidate.content.parts:
+            for part in candidate.content.parts:
+                if part.function_call and part.function_call.name:
+                    has_tool_calls = True
+                    fc = part.function_call
+                    args = _proto_to_python(dict(fc.args)) if fc.args else {}
+                    call_id = fc.id or f"call_{uuid.uuid4().hex[:24]}"
+                    blocks.append(ContentBlock(
+                        "tool_use",
+                        name=fc.name,
+                        input_data=args,
+                        block_id=call_id,
+                    ))
+                elif part.text:
+                    blocks.append(ContentBlock("text", text=part.text))
 
     stop_reason = "tool_use" if has_tool_calls else "end_turn"
 
     usage = Usage()
     if hasattr(response, "usage_metadata") and response.usage_metadata:
         usage = Usage(
-            input_tokens=getattr(response.usage_metadata, "prompt_token_count", 0),
-            output_tokens=getattr(response.usage_metadata, "candidates_token_count", 0),
+            input_tokens=getattr(response.usage_metadata, "prompt_token_count", 0) or 0,
+            output_tokens=getattr(response.usage_metadata, "candidates_token_count", 0) or 0,
         )
 
     return LLMResponse(content=blocks, stop_reason=stop_reason, usage=usage)
@@ -647,9 +653,9 @@ class OpenAIStreamWrapper:
             except json.JSONDecodeError:
                 args = {}
             if not args and tc["arguments"]:
-                print(f"    ⚠️ Tool call '{tc['name']}' had arguments '{tc['arguments']}' but parsed to empty dict")
+                logger.warning(f"Tool call '{tc['name']}' had arguments '{tc['arguments']}' but parsed to empty dict")
             elif not args:
-                print(f"    ⚠️ Tool call '{tc['name']}' received empty arguments from LLM")
+                logger.warning(f"Tool call '{tc['name']}' received empty arguments from LLM")
             blocks.append(ContentBlock(
                 "tool_use",
                 name=tc["name"],
@@ -678,27 +684,25 @@ class _Delta:
 
 class GeminiStreamWrapper:
     """
-    Wraps Gemini's native streaming to match the interface planner.py expects.
+    Wraps Gemini's google.genai streaming to match the interface planner.py expects.
     
-    Native Gemini streaming returns proper separate function_call parts
-    for each tool call — no concatenation bugs like the OpenAI compat layer.
+    Uses client.models.generate_content_stream() for proper streaming
+    with separate function_call parts for each tool call.
     """
-    def __init__(self, model, contents, generation_config=None, tools=None):
+    def __init__(self, client, model, contents, config=None):
+        self._client = client
         self._model = model
         self._contents = contents
-        self._generation_config = generation_config
-        self._tools = tools
+        self._config = config
         self._collected_text = ""
         self._collected_tool_calls = []
         self._usage = Usage()
 
     def __enter__(self):
-        kwargs = {"stream": True}
-        if self._generation_config:
-            kwargs["generation_config"] = self._generation_config
-        self._stream = self._model.generate_content(
-            self._contents,
-            **kwargs,
+        self._stream = self._client.models.generate_content_stream(
+            model=self._model,
+            contents=self._contents,
+            config=self._config,
         )
         return self
 
@@ -710,24 +714,28 @@ class GeminiStreamWrapper:
             # Extract usage from streaming chunks
             if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
                 self._usage = Usage(
-                    input_tokens=getattr(chunk.usage_metadata, "prompt_token_count", 0),
-                    output_tokens=getattr(chunk.usage_metadata, "candidates_token_count", 0),
+                    input_tokens=getattr(chunk.usage_metadata, "prompt_token_count", 0) or 0,
+                    output_tokens=getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0,
                 )
 
             if not chunk.candidates:
                 continue
 
-            for part in chunk.candidates[0].content.parts:
-                if hasattr(part, "function_call") and part.function_call.name:
+            candidate = chunk.candidates[0]
+            if not candidate.content or not candidate.content.parts:
+                continue
+
+            for part in candidate.content.parts:
+                if part.function_call and part.function_call.name:
                     fc = part.function_call
                     args = _proto_to_python(dict(fc.args)) if fc.args else {}
-                    call_id = f"call_{uuid.uuid4().hex[:24]}"
+                    call_id = fc.id or f"call_{uuid.uuid4().hex[:24]}"
                     self._collected_tool_calls.append({
                         "name": fc.name,
                         "args": args,
                         "id": call_id,
                     })
-                elif hasattr(part, "text") and part.text:
+                elif part.text:
                     self._collected_text += part.text
                     yield _StreamEvent(part.text)
 
@@ -754,15 +762,15 @@ class GeminiStreamWrapper:
 class GeminiRetryStreamWrapper:
     """
     Wraps GeminiStreamWrapper with automatic retry on transient errors.
-    Same interface as RetryStreamWrapper but for native Gemini SDK.
+    Same interface as RetryStreamWrapper but for google.genai SDK.
     """
-    def __init__(self, model, contents, backoff_fn, max_retries=5, generation_config=None, tools=None):
+    def __init__(self, client, model, contents, backoff_fn, max_retries=5, config=None):
+        self._client = client
         self._model = model
         self._contents = contents
         self._backoff_fn = backoff_fn
         self._max_retries = max_retries
-        self._generation_config = generation_config
-        self._tools = tools
+        self._config = config
         self._inner = None
 
     def __enter__(self):
@@ -770,9 +778,8 @@ class GeminiRetryStreamWrapper:
         for attempt in range(1, self._max_retries + 1):
             try:
                 self._inner = GeminiStreamWrapper(
-                    self._model, self._contents,
-                    generation_config=self._generation_config,
-                    tools=self._tools,
+                    self._client, self._model, self._contents,
+                    config=self._config,
                 )
                 self._inner.__enter__()
                 self._inner._retry_attempt = attempt
@@ -781,7 +788,7 @@ class GeminiRetryStreamWrapper:
                 last_error = e
                 if self._is_retryable(e) and attempt < self._max_retries:
                     delay = self._get_delay(e, attempt)
-                    print(f"    ⏳ Gemini stream error ({type(e).__name__}) — retry {attempt}/{self._max_retries} in {delay:.1f}s")
+                    logger.warning(f"Gemini stream error ({type(e).__name__}) — retry {attempt}/{self._max_retries} in {delay:.1f}s")
                     _time.sleep(delay)
                     continue
                 raise
@@ -799,12 +806,11 @@ class GeminiRetryStreamWrapper:
                 attempt = getattr(self._inner, '_retry_attempt', 1)
                 if attempt < self._max_retries:
                     delay = self._get_delay(e, attempt)
-                    print(f"    ⏳ Gemini mid-stream error ({type(e).__name__}) — retry {attempt}/{self._max_retries} in {delay:.1f}s")
+                    logger.warning(f"Gemini mid-stream error ({type(e).__name__}) — retry {attempt}/{self._max_retries} in {delay:.1f}s")
                     _time.sleep(delay)
                     self._inner = GeminiStreamWrapper(
-                        self._model, self._contents,
-                        generation_config=self._generation_config,
-                        tools=self._tools,
+                        self._client, self._model, self._contents,
+                        config=self._config,
                     )
                     self._inner.__enter__()
                     self._inner._retry_attempt = attempt + 1
@@ -871,7 +877,7 @@ class RetryStreamWrapper:
                 last_error = e
                 if self._is_retryable(e) and attempt < self._max_retries:
                     delay = self._get_delay(e, attempt)
-                    print(f"    ⏳ Stream error ({type(e).__name__}) — retry {attempt}/{self._max_retries} in {delay:.1f}s")
+                    logger.warning(f"Stream error ({type(e).__name__}) — retry {attempt}/{self._max_retries} in {delay:.1f}s")
                     _time.sleep(delay)
                     continue
                 raise
@@ -890,7 +896,7 @@ class RetryStreamWrapper:
                 attempt = getattr(self._inner, '_retry_attempt', 1)
                 if attempt < self._max_retries:
                     delay = self._get_delay(e, attempt)
-                    print(f"    ⏳ Mid-stream error ({type(e).__name__}) — retry {attempt}/{self._max_retries} in {delay:.1f}s")
+                    logger.warning(f"Mid-stream error ({type(e).__name__}) — retry {attempt}/{self._max_retries} in {delay:.1f}s")
                     _time.sleep(delay)
                     # Restart the stream from scratch
                     self._inner = OpenAIStreamWrapper(self._client, provider=self._provider, **self._kwargs)
@@ -932,7 +938,7 @@ class LLMClient:
     """
     Unified LLM client. Supports:
       - provider: "anthropic" → uses anthropic SDK
-      - provider: "gemini" → uses native google-generativeai SDK
+      - provider: "gemini" → uses google-genai SDK (Client-based)
       - provider: "groq" / "together" / "openai" / "openrouter"
           → uses openai SDK with custom base_url
 
@@ -958,11 +964,10 @@ class LLMClient:
         elif provider == "gemini":
             if not _HAS_GEMINI:
                 raise ImportError(
-                    "google-generativeai is required for Gemini provider. "
-                    "Install it: pip install google-generativeai"
+                    "google-genai is required for Gemini provider. "
+                    "Install it: pip install google-genai"
                 )
-            genai.configure(api_key=api_key)
-            self._client = genai  # module reference for model creation
+            self._client = _genai_module.Client(api_key=api_key)
             self._mode = "gemini"
         else:
             from openai import OpenAI
@@ -1005,27 +1010,26 @@ class LLMClient:
             )
             return self._wrap_anthropic_response(resp)
         elif self._mode == "gemini":
-            # ── Native Gemini SDK path ──
+            # ── Google GenAI SDK path ──
             gemini_tools = _anthropic_to_gemini_tools(tools)
             gemini_contents = _convert_history_for_gemini(messages, system)
 
-            gemini_model = genai.GenerativeModel(
-                model,
-                tools=gemini_tools,
+            config = _genai_types.GenerateContentConfig(
                 system_instruction=system,
+                tools=gemini_tools,
+                temperature=temperature,
+                automatic_function_calling=_genai_types.AutomaticFunctionCallingConfig(disable=True),
             )
-
-            gen_config = {}
             if max_tokens:
-                gen_config["max_output_tokens"] = max_tokens
-            gen_config["temperature"] = temperature
+                config.max_output_tokens = max_tokens
 
             max_retries = 5
             for attempt in range(1, max_retries + 1):
                 try:
-                    resp = gemini_model.generate_content(
-                        gemini_contents,
-                        generation_config=gen_config if gen_config else None,
+                    resp = self._client.models.generate_content(
+                        model=model,
+                        contents=gemini_contents,
+                        config=config,
                     )
                     return _gemini_response_to_normalized(resp)
                 except Exception as e:
@@ -1034,14 +1038,14 @@ class LLMClient:
                     # Rate limit / resource exhausted
                     if any(m in error_str for m in ("rate_limit", "rate limit", "429", "resource_exhausted")) and attempt < max_retries:
                         delay = self._backoff_delay(attempt, base=2.0, cap=60.0)
-                        print(f"    ⏳ Gemini rate limited — retry {attempt}/{max_retries} in {delay:.1f}s")
+                        logger.warning(f"Gemini rate limited — retry {attempt}/{max_retries} in {delay:.1f}s")
                         _time.sleep(delay)
                         continue
 
                     # Server errors
                     if any(code in error_str for code in ("500", "502", "503", "529")) and attempt < max_retries:
                         delay = self._backoff_delay(attempt, base=1.0, cap=30.0)
-                        print(f"    ⏳ Gemini server error — retry {attempt}/{max_retries} in {delay:.1f}s")
+                        logger.warning(f"Gemini server error — retry {attempt}/{max_retries} in {delay:.1f}s")
                         _time.sleep(delay)
                         continue
 
@@ -1072,21 +1076,21 @@ class LLMClient:
                         # If recovery failed, retry with backoff
                         if attempt < max_retries:
                             delay = self._backoff_delay(attempt)
-                            print(f"    ⏳ tool_use_failed — retry {attempt}/{max_retries} in {delay:.1f}s")
+                            logger.warning(f"tool_use_failed — retry {attempt}/{max_retries} in {delay:.1f}s")
                             _time.sleep(delay)
                             continue
 
                     # Rate limit — retry with longer backoff
                     if "rate_limit" in error_str.lower() and attempt < max_retries:
                         delay = self._backoff_delay(attempt, base=1.0, cap=60.0)
-                        print(f"    ⏳ Rate limited — retry {attempt}/{max_retries} in {delay:.1f}s")
+                        logger.warning(f"Rate limited — retry {attempt}/{max_retries} in {delay:.1f}s")
                         _time.sleep(delay)
                         continue
 
                     # Server errors (5xx) — transient, retry
                     if any(code in error_str for code in ("500", "502", "503", "529")) and attempt < max_retries:
                         delay = self._backoff_delay(attempt, base=1.0, cap=30.0)
-                        print(f"    ⏳ Server error — retry {attempt}/{max_retries} in {delay:.1f}s")
+                        logger.warning(f"Server error — retry {attempt}/{max_retries} in {delay:.1f}s")
                         _time.sleep(delay)
                         continue
 
@@ -1115,28 +1119,26 @@ class LLMClient:
                 kwargs["temperature"] = temperature
             return self._client.messages.stream(**kwargs)
         elif self._mode == "gemini":
-            # ── Native Gemini SDK streaming ──
+            # ── Google GenAI SDK streaming ──
             gemini_tools = _anthropic_to_gemini_tools(tools)
             gemini_contents = _convert_history_for_gemini(messages, system)
 
-            gemini_model = genai.GenerativeModel(
-                model,
-                tools=gemini_tools,
+            config = _genai_types.GenerateContentConfig(
                 system_instruction=system,
+                tools=gemini_tools,
+                automatic_function_calling=_genai_types.AutomaticFunctionCallingConfig(disable=True),
             )
-
-            gen_config = {}
             if max_tokens:
-                gen_config["max_output_tokens"] = max_tokens
+                config.max_output_tokens = max_tokens
             if temperature is not None:
-                gen_config["temperature"] = temperature
+                config.temperature = temperature
 
             return GeminiRetryStreamWrapper(
-                gemini_model,
+                self._client,
+                model,
                 gemini_contents,
                 self._backoff_delay,
-                generation_config=gen_config if gen_config else None,
-                tools=gemini_tools,
+                config=config,
             )
         else:
             openai_tools = _anthropic_to_openai_tools(tools)

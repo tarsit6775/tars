@@ -83,7 +83,7 @@ def _load_config():
         with open(config_path) as f:
             return yaml.safe_load(f)
     except Exception:
-        return {"imessage": {"owner_phone": "+18137345204", "rate_limit": 3, "max_message_length": 1600}}
+        return {"imessage": {"owner_phone": "", "rate_limit": 3, "max_message_length": 1600}}
 
 
 class _FlightSearchTimeout(Exception):
@@ -412,7 +412,7 @@ def _parse_date(date_str: str) -> str:
             if target < now:
                 target = target.replace(year=year + 1)
             return target.strftime("%Y-%m-%d")
-    print(f"    ⚠️ Could not parse date '{text}', defaulting to tomorrow")
+    logger.warning(f"    ⚠️ Could not parse date '{text}', defaulting to tomorrow")
     return (now + timedelta(days=1)).strftime("%Y-%m-%d")
 
 
@@ -1010,7 +1010,7 @@ def _get_verified_booking_link(airline_name: str, origin: str, destination: str,
         if _verify_booking_link(airline_url):
             return airline_url
         else:
-            print(f"    ⚠️ Broken link for {airline_name}: {airline_url[:60]}... → using Google Flights")
+            logger.warning(f"    ⚠️ Broken link for {airline_name}: {airline_url[:60]}... → using Google Flights")
 
     # Fallback: Google Flights search URL (always works)
     if search_url:
@@ -1274,7 +1274,7 @@ def _extract_flight_data_dom(cdp) -> dict:
         result["flights"] = data.get("flights", [])
         result["price_insight"] = data.get("priceInsight", "")
     except Exception as e:
-        print(f"    ⚠️ DOM extraction failed: {e}")
+        logger.warning(f"    ⚠️ DOM extraction failed: {e}")
 
     # Try to get return flight info for round-trips
     try:
@@ -2359,7 +2359,7 @@ def _cdp_flight_search(url: str, timeout: int = 50) -> dict:
 
             if cdp:
                 try: cdp.close()
-                except: pass
+                except Exception: pass
 
             return {
                 "flights": flights,
@@ -2371,9 +2371,9 @@ def _cdp_flight_search(url: str, timeout: int = 50) -> dict:
         except _FlightSearchTimeout:
             if cdp:
                 try: cdp.close()
-                except: pass
+                except Exception: pass
             if attempt == 0:
-                print(f"    ⚠️ CDP attempt {attempt+1} timed out, retrying...")
+                logger.warning(f"    ⚠️ CDP attempt {attempt+1} timed out, retrying...")
                 time.sleep(2)
                 continue
             return {"flights": [], "price_insight": "", "return_flight": {}, "raw_text": ""}
@@ -2381,9 +2381,9 @@ def _cdp_flight_search(url: str, timeout: int = 50) -> dict:
         except Exception as e:
             if cdp:
                 try: cdp.close()
-                except: pass
+                except Exception: pass
             if attempt == 0:
-                print(f"    ⚠️ CDP attempt {attempt+1} failed ({e}), retrying...")
+                logger.warning(f"    ⚠️ CDP attempt {attempt+1} failed ({e}), retrying...")
                 time.sleep(2)
                 continue
             return {"flights": [], "price_insight": "", "return_flight": {}, "raw_text": ""}
@@ -2418,7 +2418,7 @@ def search_flights(
         c_key = _cache_key(origin_code, dest_code, depart, ret_parsed, cabin, stops)
         cached = _get_cached(c_key)
         if cached:
-            print(f"    ⚡ Cache hit for {origin_code}→{dest_code}")
+            logger.info(f"    ⚡ Cache hit for {origin_code}→{dest_code}")
             return cached
 
         url = _build_google_flights_url(
@@ -3308,10 +3308,10 @@ def _send_html_email(to_address, subject, html_body, attachment_path="", from_ad
         return {"success": True, "content": f"HTML email sent to {to_address}: {subject}"}
 
     except smtplib.SMTPAuthenticationError:
-        print("    ⚠️ SMTP auth failed — falling back to Mail.app")
+        logger.warning("    ⚠️ SMTP auth failed — falling back to Mail.app")
         return _send_html_email_mailapp(to_address, subject, html_body, attachment_path, from_address)
     except Exception as e:
-        print(f"    ⚠️ SMTP failed ({e}) — falling back to Mail.app")
+        logger.warning(f"    ⚠️ SMTP failed ({e}) — falling back to Mail.app")
         return _send_html_email_mailapp(to_address, subject, html_body, attachment_path, from_address)
 
 
@@ -3348,11 +3348,11 @@ def _send_html_email_mailapp(to_address, subject, html_body, attachment_path="",
     outlook_result = _send_via_outlook(to_address, safe_subject, html_file.name, attachment_path)
     if outlook_result.get("success"):
         try: os.unlink(html_file.name)
-        except: pass
+        except Exception: pass
         return outlook_result
 
     # Fallback: Mail.app (set HTML AFTER attachment to avoid body reset bug)
-    print(f"    ⚠️ Outlook failed, trying Mail.app...")
+    logger.warning(f"    ⚠️ Outlook failed, trying Mail.app...")
     if attachment_path and os.path.isfile(attachment_path):
         script = f'''
         set htmlContent to read POSIX file "{html_file.name}" as «class utf8»
@@ -3391,7 +3391,7 @@ def _send_html_email_mailapp(to_address, subject, html_body, attachment_path="",
             return {"success": False, "content": f"Mail.app error: {result.stderr}"}
     except Exception as e:
         try: os.unlink(html_file.name)
-        except: pass
+        except Exception: pass
         return {"success": False, "content": f"Email failed: {e}"}
 
 
@@ -3426,7 +3426,7 @@ def _send_via_outlook(to_address, subject, html_file_path, attachment_path=""):
         if result.returncode == 0:
             return {"success": True, "content": f"HTML email sent via Outlook to {to_address}: {subject}"}
         else:
-            print(f"    ⚠️ Outlook error: {result.stderr[:200]}")
+            logger.warning(f"    ⚠️ Outlook error: {result.stderr[:200]}")
             return {"success": False, "content": f"Outlook error: {result.stderr}"}
     except Exception as e:
         return {"success": False, "content": f"Outlook failed: {e}"}
@@ -3587,10 +3587,10 @@ def _search_single_date(args: tuple) -> dict:
                 "options": len(flights), "booking_link": booking_link,
                 "price_insight": r.get("price_insight", ""),
             }
-            print(f"      📅 {date_str}: {best.get('price', '?')} ({best.get('airline', '?')})")
+            logger.info(f"      📅 {date_str}: {best.get('price', '?')} ({best.get('airline', '?')})")
             return result
         else:
-            print(f"      📅 {date_str}: no results")
+            logger.info(f"      📅 {date_str}: no results")
             return {
                 "date": date_str, "day": dt.strftime("%A"),
                 "price": "N/A", "price_num": 99999, "airline": "—", "stops": "—",
@@ -3598,7 +3598,7 @@ def _search_single_date(args: tuple) -> dict:
                 "price_insight": "",
             }
     except Exception as e:
-        print(f"      📅 {date_str}: error ({e})")
+        logger.info(f"      📅 {date_str}: error ({e})")
         return {
             "date": date_str, "day": dt.strftime("%A"),
             "price": "Error", "price_num": 99999, "airline": "—", "stops": "—",
@@ -3661,7 +3661,7 @@ def find_cheapest_dates(
     if dates_to_search[-1] != end:
         dates_to_search.append(end)
 
-    print(f"    ✈️ Scanning {len(dates_to_search)} dates (parallel): {origin_code}→{dest_code} ({start.strftime('%b %d')} – {end.strftime('%b %d, %Y')})")
+    logger.info(f"    ✈️ Scanning {len(dates_to_search)} dates (parallel): {origin_code}→{dest_code} ({start.strftime('%b %d')} – {end.strftime('%b %d, %Y')})")
 
     # Build worker args
     worker_args = [(origin, destination, dt, trip_type, cabin, stops) for dt in dates_to_search]
@@ -3677,7 +3677,7 @@ def find_cheapest_dates(
                     date_results.append(result)
             except Exception as e:
                 dt = futures[future]
-                print(f"      📅 {dt.strftime('%Y-%m-%d')}: worker error ({e})")
+                logger.info(f"      📅 {dt.strftime('%Y-%m-%d')}: worker error ({e})")
                 date_results.append({
                     "date": dt.strftime("%Y-%m-%d"), "day": dt.strftime("%A"),
                     "price": "Error", "price_num": 99999, "airline": "—", "stops": "—",
@@ -3808,7 +3808,7 @@ def track_flight_price(
 
     tracker_id = f"{origin_code}-{dest_code}-{depart[:10].replace('-', '')}"
 
-    print(f"    🎯 Setting up tracker: {origin_code}→{dest_code} on {depart}, target ${target_price}")
+    logger.info(f"    🎯 Setting up tracker: {origin_code}→{dest_code} on {depart}, target ${target_price}")
     initial = search_flights(
         origin=origin, destination=destination, depart_date=depart_date,
         return_date=return_date, trip_type=trip_type, cabin=cabin, stops=stops,
@@ -3936,7 +3936,7 @@ def _send_price_alert(tracker, current_price, airline, booking_link):
         html = _html_price_alert_email(origin, dest, target, current_price, airline, depart, booking_link, tracker_id)
         _send_html_email(to_address=email_to, subject=f"🔔 Price Alert: {origin}→{dest} dropped to ${current_price}!", html_body=html)
     except Exception as e:
-        print(f"    ⚠️ Alert email failed: {e}")
+        logger.warning(f"    ⚠️ Alert email failed: {e}")
 
     try:
         from voice.imessage_send import IMessageSender
@@ -3982,7 +3982,7 @@ def check_price_trackers() -> dict:
         except ValueError:
             pass
 
-        print(f"    🔍 Checking tracker: {tracker['id']}...")
+        logger.debug(f"    🔍 Checking tracker: {tracker['id']}...")
         checked += 1
 
         result = search_flights(
@@ -4016,9 +4016,9 @@ def check_price_trackers() -> dict:
                 _send_price_alert(tracker, price, airline, booking_link)
                 tracker["alerts_sent"] = tracker.get("alerts_sent", 0) + 1
                 alerts += 1
-                print(f"    🔔 ALERT: {tracker['id']} at ${price} (target ${tracker['target_price']})")
+                logger.info(f"    🔔 ALERT: {tracker['id']} at ${price} (target ${tracker['target_price']})")
             else:
-                print(f"    📊 {tracker['id']}: ${price} (target ${tracker['target_price']})")
+                logger.info(f"    📊 {tracker['id']}: ${price} (target ${tracker['target_price']})")
 
     _save_trackers(trackers)
     return {"checked": checked, "alerts": alerts}
@@ -4041,19 +4041,19 @@ def start_price_tracker_scheduler(check_interval_minutes: int = 30):
 
     def _scheduler_loop():
         global _scheduler_running
-        print(f"    ⏰ Price tracker scheduler started (every {check_interval_minutes}min)")
+        logger.info(f"    ⏰ Price tracker scheduler started (every {check_interval_minutes}min)")
         while _scheduler_running:
             try:
                 result = check_price_trackers()
                 if result["checked"] > 0:
-                    print(f"    ⏰ Tracker check: {result['checked']} checked, {result['alerts']} alerts")
+                    logger.info(f"    ⏰ Tracker check: {result['checked']} checked, {result['alerts']} alerts")
             except Exception as e:
-                print(f"    ⚠️ Tracker scheduler error: {e}")
+                logger.warning(f"    ⚠️ Tracker scheduler error: {e}")
             for _ in range(check_interval_minutes * 6):
                 if not _scheduler_running:
                     break
                 time.sleep(10)
-        print("    ⏰ Price tracker scheduler stopped")
+        logger.info("    ⏰ Price tracker scheduler stopped")
 
     _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True)
     _scheduler_thread.start()
@@ -4107,13 +4107,13 @@ def book_flight(
     if return_date:
         ret = _parse_date(return_date) if not re.match(r'^\d{4}-\d{2}-\d{2}$', return_date) else return_date
 
-    print(f"    🛒 Starting booking flow: {origin_code}→{dest_code} on {dep}")
+    logger.info(f"    🛒 Starting booking flow: {origin_code}→{dest_code} on {dep}")
 
     # Step 1: If airline is specified, try their direct booking page first
     if airline and airline != "—":
         airline_url = _get_airline_booking_url(airline, origin_code, dest_code, dep, ret)
         if airline_url and "google.com" not in airline_url:
-            print(f"    🌐 Opening {airline} booking page...")
+            logger.info(f"    🌐 Opening {airline} booking page...")
             try:
                 goto_result = act_goto(airline_url)
                 time.sleep(3)
@@ -4153,10 +4153,10 @@ def book_flight(
                     "method": "airline_direct",
                 }
             except Exception as e:
-                print(f"    ⚠️ Airline booking page failed: {e}")
+                logger.warning(f"    ⚠️ Airline booking page failed: {e}")
 
     # Step 2: Search on Google Flights first, then click through to book
-    print(f"    🔍 Searching flights to find the best option to book...")
+    logger.debug(f"    🔍 Searching flights to find the best option to book...")
 
     # Search flights to find the right one
     search_result = search_flights(
@@ -4193,13 +4193,13 @@ def book_flight(
     sel_duration = selected.get("duration", "?")
     sel_stops = selected.get("stops", "?")
 
-    print(f"    ✈️ Selected: {sel_airline} at {sel_price} ({sel_stops}, {sel_duration})")
+    logger.info(f"    ✈️ Selected: {sel_airline} at {sel_price} ({sel_stops}, {sel_duration})")
 
     # Step 3: Navigate to booking URL
     # Try airline-specific URL first
     booking_url = _get_verified_booking_link(sel_airline, origin_code, dest_code, dep, ret)
     
-    print(f"    🌐 Opening booking page: {booking_url[:60]}...")
+    logger.info(f"    🌐 Opening booking page: {booking_url[:60]}...")
     try:
         act_goto(booking_url)
         time.sleep(4)
@@ -4217,9 +4217,9 @@ def book_flight(
                 time.sleep(3)
                 # Read the page to see if we landed on airline site
                 final_page = act_read_page()
-                print(f"    📄 Landed on: {final_page[:100] if final_page else 'unknown'}...")
+                logger.info(f"    📄 Landed on: {final_page[:100] if final_page else 'unknown'}...")
             except Exception as click_err:
-                print(f"    ⚠️ Auto-click: {click_err}")
+                logger.warning(f"    ⚠️ Auto-click: {click_err}")
 
         # Notify user
         try:

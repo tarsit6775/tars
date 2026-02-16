@@ -18,6 +18,9 @@ import os
 import re
 from collections import deque
 
+import logging
+logger = logging.getLogger("TARS")
+
 
 class IMessageReader:
     def __init__(self, config):
@@ -133,7 +136,7 @@ class IMessageReader:
 
                 return messages
         except Exception as e:
-            print(f"  ⚠️ Error reading chat.db: {e}")
+            logger.warning(f"  ⚠️ Error reading chat.db: {e}")
             return []
 
     def wait_for_reply(self, timeout=300):
@@ -145,7 +148,7 @@ class IMessageReader:
         between our last check and now, we WANT to catch it — resetting would
         permanently skip it.
         """
-        print(f"  📱 Waiting for iMessage reply (timeout: {timeout}s)...")
+        logger.info(f"  📱 Waiting for iMessage reply (timeout: {timeout}s)...")
         start = time.time()
 
         while time.time() - start < timeout:
@@ -154,7 +157,7 @@ class IMessageReader:
                 # Concatenate all messages so none are lost when multiple
                 # arrive during a single poll interval
                 reply = "\n".join(m["text"] for m in messages)
-                print(f"  📱 Received reply ({len(messages)} msg(s)): {reply[:80]}...")
+                logger.debug(f"  📱 Received reply ({len(messages)} msg(s)): {reply[:80]}...")
                 return {"success": True, "content": reply}
 
             time.sleep(self.poll_interval)

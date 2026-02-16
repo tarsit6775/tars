@@ -28,6 +28,9 @@ import urllib.parse
 
 from hands.cdp import CDP, CDP_PORT
 
+import logging
+logger = logging.getLogger("TARS")
+
 
 # ═══════════════════════════════════════════════════════
 #  Module State — Singleton CDP Connection
@@ -72,7 +75,7 @@ def _auto_handle_dialogs():
         msg = ev.get("message", "")
         try:
             _cdp.send("Page.handleJavaScriptDialog", {"accept": True})
-            print(f"    🔔 Auto-accepted dialog: {msg[:80]}")
+            logger.info(f"    🔔 Auto-accepted dialog: {msg[:80]}")
         except Exception:
             pass
 
@@ -109,12 +112,12 @@ def _js(code):
         return str(val)
     except TimeoutError as e:
         _consecutive_timeouts += 1
-        print(f"    ⚠️ CDP timeout #{_consecutive_timeouts}: {str(e)[:80]}")
+        logger.warning(f"    ⚠️ CDP timeout #{_consecutive_timeouts}: {str(e)[:80]}")
         # Try to unstick the browser by navigating to a blank page
         try:
             if _consecutive_timeouts >= 3:
                 # Force full reconnect after 3+ consecutive timeouts
-                print(f"    🔄 Forcing CDP reconnect after {_consecutive_timeouts} consecutive timeouts")
+                logger.warning(f"    🔄 Forcing CDP reconnect after {_consecutive_timeouts} consecutive timeouts")
                 if _cdp:
                     try:
                         _cdp.connected = False
@@ -138,7 +141,7 @@ def _js(code):
         _consecutive_timeouts += 1
         if _consecutive_timeouts >= 3:
             # Force reconnect on repeated failures
-            print(f"    🔄 Forcing CDP reconnect after {_consecutive_timeouts} consecutive errors")
+            logger.warning(f"    🔄 Forcing CDP reconnect after {_consecutive_timeouts} consecutive errors")
             if _cdp:
                 try:
                     _cdp.connected = False

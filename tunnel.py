@@ -31,6 +31,9 @@ sys.path.insert(0, BASE_DIR)
 
 from utils.event_bus import event_bus
 
+import logging
+logger = logging.getLogger("TARS")
+
 
 def load_config():
     config_path = os.path.join(BASE_DIR, "config.yaml")
@@ -409,7 +412,7 @@ class TARSTunnel:
         try:
             import websockets
         except ImportError:
-            print("  [!] Install websockets: pip install websockets")
+            logger.warning("  [!] Install websockets: pip install websockets")
             sys.exit(1)
 
         self._loop = asyncio.get_event_loop()
@@ -417,12 +420,12 @@ class TARSTunnel:
         while self.running:
             try:
                 url = f"{self.relay_url}?token={self.token}"
-                print(f"  [>] Connecting to relay: {self.relay_url}")
+                logger.info(f"  [>] Connecting to relay: {self.relay_url}")
 
                 async with websockets.connect(url, ping_interval=15, ping_timeout=10) as ws:
                     self.ws = ws
                     self.reconnect_delay = 1
-                    print(f"  [+] Tunnel established")
+                    logger.info(f"  [+] Tunnel established")
 
                     # Create send queue
                     self._send_queue = asyncio.Queue()
@@ -465,10 +468,10 @@ class TARSTunnel:
                     event_bus.emit = original_emit
 
             except Exception as e:
-                print(f"  [!] Tunnel error: {e}")
+                logger.warning(f"  [!] Tunnel error: {e}")
 
             if self.running:
-                print(f"  [~] Reconnecting in {self.reconnect_delay}s...")
+                logger.warning(f"  [~] Reconnecting in {self.reconnect_delay}s...")
                 await asyncio.sleep(self.reconnect_delay)
                 self.reconnect_delay = min(self.reconnect_delay * 2, self.max_reconnect_delay)
 
@@ -602,26 +605,26 @@ def main():
     else:
         relay_url = config.get("relay", {}).get("url", "")
         if not relay_url:
-            print("  [!] No relay URL configured.")
-            print("  Usage: python tunnel.py wss://your-app.railway.app/tunnel")
-            print("  Or add relay.url to config.yaml")
+            logger.warning("  [!] No relay URL configured.")
+            logger.warning("  Usage: python tunnel.py wss://your-app.railway.app/tunnel")
+            logger.warning("  Or add relay.url to config.yaml")
             sys.exit(1)
 
     token = config.get("relay", {}).get("token", "tars-default-token-change-me")
 
-    print()
-    print("  ╔══════════════════════════════════════╗")
-    print("  ║     TARS TUNNEL — Full Control       ║")
-    print("  ╠══════════════════════════════════════╣")
-    print(f"  ║  Relay: {relay_url[:30]:<30}║")
-    print("  ║  Process Manager: Ready              ║")
-    print("  ╚══════════════════════════════════════╝")
-    print()
+    logger.info("")
+    logger.info("  ╔══════════════════════════════════════╗")
+    logger.info("  ║     TARS TUNNEL — Full Control       ║")
+    logger.info("  ╠══════════════════════════════════════╣")
+    logger.info(f"  ║  Relay: {relay_url[:30]:<30}║")
+    logger.info("  ║  Process Manager: Ready              ║")
+    logger.info("  ╚══════════════════════════════════════╝")
+    logger.info("")
 
     tunnel = TARSTunnel(relay_url, token)
 
     def shutdown(*args):
-        print("\n  [x] Tunnel shutting down...")
+        logger.info("\n  [x] Tunnel shutting down...")
         tunnel.stop()
         sys.exit(0)
 

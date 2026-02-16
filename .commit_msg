@@ -1,13 +1,19 @@
-Brain v4: Phases 1-6 — The Brain That Thinks
+Migrate google.generativeai to google.genai SDK + final sweep
 
-Phase 1: Message Stream Parser - 3s merge window for back-to-back messages
-Phase 2: Intent Classifier - zero LLM tokens, 7 types, domain detection
-Phase 3: Conversation Threading - persistent threads, decision journal
-Phase 4: Brain/Hands Separation - process() entry, extracted helpers
-Phase 5: Modular System Prompt - domain injection, escalation protocol
-Phase 6: web_search tool, deploy_dev_agent v2, tars.py wiring
+- brain/llm_client.py: Full migration from deprecated google-generativeai
+  to new google-genai SDK. Replaces protobuf types with pydantic types,
+  genai.configure with genai.Client, GenerativeModel with
+  client.models.generate_content, streaming via generate_content_stream.
+  All 12 remaining print calls converted to logger.
+- brain/planner.py: Wired mark_fix_failed feedback loop.
+- brain/planner_v4_backup.py: Deleted 872 lines of dead code.
+- executor.py: Fixed bare except to except Exception.
+- hands: print to logger in browser.py, browser_agent.py, cdp.py.
+- hands/flight_search.py: 32 print to logger, 5 bare except fixes,
+  removed hardcoded phone number.
+- memory/error_tracker.py: print to logger.
+- tunnel.py: print to logger.
+- voice/imessage_read.py: print to logger.
+- requirements.txt: google-generativeai to google-genai.
 
-New files: brain/message_parser.py, brain/intent.py, brain/threads.py
-Rewritten: brain/planner.py, brain/prompts.py
-Updated: brain/tools.py, tars.py
-Tests: test_brain_v4.py — all phases pass
+236/236 tests passing.

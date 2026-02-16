@@ -29,6 +29,9 @@ from hands.browser import (
     act_press_and_hold, act_solve_captcha,
 )
 
+import logging
+logger = logging.getLogger("TARS")
+
 
 # ─────────────────────────────────────────────
 #  Tool Definitions — Simple, Human-Like
@@ -265,7 +268,7 @@ class BrowserAgent:
 
     def run(self, task, context=None):
         """Execute a browser task autonomously. Returns result dict."""
-        print(f"  🌐 Browser Agent: {task[:80]}...")
+        logger.info(f"  🌐 Browser Agent: {task[:80]}...")
         self._notify(f"🌐 Starting: {task[:300]}")
 
         # Make sure Chrome is active
@@ -291,12 +294,12 @@ class BrowserAgent:
         NAVIGATION_ACTIONS = {"goto", "click", "key", "select", "solve_captcha", "hold"}
 
         for step in range(1, self.max_steps + 1):
-            print(f"  🧠 [Browser Agent] Step {step}/{self.max_steps}...")
+            logger.debug(f"  🧠 [Browser Agent] Step {step}/{self.max_steps}...")
 
             # ── Kill switch check — abort immediately ──
             if self._kill_event and self._kill_event.is_set():
                 msg = f"Browser Agent killed by user at step {step}."
-                print(f"  🛑 {msg}")
+                logger.warning(f"  🛑 {msg}")
                 self._notify(f"🛑 {msg}")
                 return {"success": False, "content": msg, "steps": step, "stuck": True, "stuck_reason": "Kill switch activated"}
 
@@ -321,7 +324,7 @@ class BrowserAgent:
                 )
             except Exception as e:
                 err = f"API error: {e}"
-                print(f"  ❌ {err}")
+                logger.warning(f"  ❌ {err}")
                 self._notify(f"❌ {err[:200]}")
                 return {"success": False, "content": err, "steps": step, "stuck": True, "stuck_reason": err}
 
@@ -332,7 +335,7 @@ class BrowserAgent:
 
             for block in assistant_content:
                 if block.type == "text" and block.text.strip():
-                    print(f"    💭 {block.text[:150]}")
+                    logger.debug(f"    💭 {block.text[:150]}")
 
                 elif block.type == "tool_use":
                     name = block.name
@@ -354,7 +357,7 @@ class BrowserAgent:
                         summary = inp.get("summary", "Done.")
                         # Guard 1: reject if error rate too high
                         if total_actions > 2 and total_errors >= total_actions * 0.5:
-                            print(f"  ⚠️ Rejecting 'done' — {total_errors}/{total_actions} actions failed")
+                            logger.warning(f"  ⚠️ Rejecting 'done' — {total_errors}/{total_actions} actions failed")
                             tool_results.append({
                                 "type": "tool_result",
                                 "tool_use_id": tid,
@@ -363,7 +366,7 @@ class BrowserAgent:
                             continue
                         # Guard 2: reject if 'done' called too early (< 4 actions)
                         if total_actions < 4:
-                            print(f"  ⚠️ Rejecting 'done' — only {total_actions} actions taken, too few")
+                            logger.warning(f"  ⚠️ Rejecting 'done' — only {total_actions} actions taken, too few")
                             tool_results.append({
                                 "type": "tool_result",
                                 "tool_use_id": tid,
@@ -378,14 +381,14 @@ class BrowserAgent:
                         has_fail = any(s in verify_lower for s in fail_signals)
                         has_success = any(s in verify_lower for s in success_signals)
                         if has_fail and not has_success:
-                            print(f"  ⚠️ Rejecting 'done' — page still shows signup/form fields")
+                            logger.warning(f"  ⚠️ Rejecting 'done' — page still shows signup/form fields")
                             tool_results.append({
                                 "type": "tool_result",
                                 "tool_use_id": tid,
                                 "content": f"REJECTED: Page still shows signup/login form. Current page:\n{verify[:1500]}\n\nYou are NOT done yet. Continue filling the form or call 'stuck'.",
                             })
                             continue
-                        print(f"  ✅ Done: {summary[:150]}")
+                        logger.info(f"  ✅ Done: {summary[:150]}")
                         self._notify(f"✅ Done: {summary[:500]}")
                         return {"success": True, "content": summary, "steps": step}
 
@@ -400,16 +403,16 @@ class BrowserAgent:
                                     page_title = line[5:].strip()
                                     break
                             reason = f"Stuck on page: {page_title}. Page state: {page_ctx[:500]}"
-                        print(f"  ❌ [Browser Agent] Stuck: {reason[:150]}")
+                        logger.warning(f"  ❌ [Browser Agent] Stuck: {reason[:150]}")
                         self._notify(f"❌ Stuck: {reason[:500]}")
                         return {"success": False, "stuck": True, "stuck_reason": reason, "content": f"Browser agent stuck: {reason}", "steps": step}
 
                     # Execute
                     inp_short = json.dumps(inp)[:100]
-                    print(f"    🔧 {name}({inp_short})")
+                    logger.debug(f"    🔧 {name}({inp_short})")
                     result = self._dispatch(name, inp)
                     result_str = str(result)[:4000]
-                    print(f"      → {result_str[:150]}")
+                    logger.debug(f"      → {result_str[:150]}")
                     
                     # Track error rate
                     total_actions += 1
@@ -428,7 +431,7 @@ class BrowserAgent:
                     repeat_count = recent_window.count(action_sig)
                     if repeat_count >= LOOP_THRESHOLD:
                         result_str += f"\n\n⚠️ WARNING: You have tried this EXACT same action {repeat_count} times. It is NOT working. You MUST try a completely different approach, or call 'stuck' if you cannot proceed."
-                        print(f"  ⚠️ Loop detected: {name} repeated {repeat_count}x")
+                        logger.warning(f"  ⚠️ Loop detected: {name} repeated {repeat_count}x")
 
                     # ── Auto-wait after navigation actions ──
                     # If the action triggers a page change, wait for it to load
@@ -456,7 +459,7 @@ class BrowserAgent:
                     texts = [b.text for b in assistant_content if b.type == "text"]
                     txt = " ".join(texts).strip()
                     if txt:
-                        print(f"  ⚠️ Text-only: {txt[:150]}")
+                        logger.warning(f"  ⚠️ Text-only: {txt[:150]}")
                     messages.append({"role": "assistant", "content": assistant_content})
                     messages.append({"role": "user", "content": "Use a tool. If done, call done(). If stuck, call stuck()."})
                     continue
@@ -466,6 +469,6 @@ class BrowserAgent:
 
         # Max steps hit
         msg = f"Reached {self.max_steps} steps. Task may be partially complete."
-        print(f"  ⏱️ {msg}")
+        logger.info(f"  ⏱️ {msg}")
         self._notify(f"⏱️ {msg}")
         return {"success": False, "content": msg, "steps": self.max_steps, "stuck": True, "stuck_reason": f"Hit max steps ({self.max_steps})"}

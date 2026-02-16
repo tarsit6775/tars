@@ -25,6 +25,9 @@ from typing import Dict, Optional, List
 
 from utils.event_bus import event_bus
 
+import logging
+logger = logging.getLogger("TARS")
+
 
 # ─── Constants ──────────────────────────────────────
 TARS_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -378,10 +381,10 @@ class ErrorTracker:
                     data = json.load(f)
                 for key, entry_dict in data.items():
                     self._entries[key] = ErrorEntry.from_dict(entry_dict)
-                print(f"  📋 Error tracker: {len(self._entries)} patterns loaded, "
+                logger.info(f"  📋 Error tracker: {len(self._entries)} patterns loaded, "
                       f"{sum(1 for e in self._entries.values() if e.auto_fixable)} auto-fixable")
         except Exception as e:
-            print(f"  ⚠️ Error tracker load failed: {e}")
+            logger.warning(f"  ⚠️ Error tracker load failed: {e}")
             self._entries = {}
 
     def _save(self):
@@ -407,7 +410,7 @@ class ErrorTracker:
                 json.dump(data, f, indent=2)
             self._dirty = False
         except Exception as e:
-            print(f"  ⚠️ Error tracker save failed: {e}")
+            logger.warning(f"  ⚠️ Error tracker save failed: {e}")
 
 
 # ─── Singleton ──────────────────────────────────────

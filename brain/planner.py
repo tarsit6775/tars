@@ -111,6 +111,7 @@ class TARSBrain:
         self._tool_loop_count = 0
         self._metacog_loop_count = 0  # Consecutive metacognition loop detections
         self._brain_sent_imessage = False  # Track if brain already notified user
+        self._applied_fixes = {}  # {fix_key: fix_description} — tracks auto-fixes to detect recurrence
 
         # Phase 28: Reasoning Trace
         self._reasoning_trace = []
@@ -752,13 +753,26 @@ class TARSBrain:
                         details=str(tool_input)[:200],
                     )
                     if fix_info and fix_info.get("has_fix"):
-                        logger.info(f"  🩹 Known fix available: {fix_info['fix'][:80]}")
-                        event_bus.emit("auto_fix_available", {
-                            "tool": tool_name,
-                            "fix": fix_info["fix"][:200],
-                            "confidence": fix_info.get("confidence", 0),
-                            "times_applied": fix_info.get("times_applied", 0),
-                        })
+                        # Check if this same error recurred after a fix was already suggested
+                        fix_key = f"{tool_name}:{error_content[:100]}"
+                        if fix_key in self._applied_fixes:
+                            # Fix was already suggested but error recurred — mark it as failed
+                            logger.warning(f"🩹 Auto-fix failed — same error recurred: {error_content[:80]}")
+                            error_tracker.mark_fix_failed(
+                                error=error_content,
+                                context=tool_name,
+                            )
+                            del self._applied_fixes[fix_key]
+                        else:
+                            # First time suggesting this fix — track it
+                            self._applied_fixes[fix_key] = fix_info["fix"][:200]
+                            logger.info(f"🩹 Known fix available: {fix_info['fix'][:80]}")
+                            event_bus.emit("auto_fix_available", {
+                                "tool": tool_name,
+                                "fix": fix_info["fix"][:200],
+                                "confidence": fix_info.get("confidence", 0),
+                                "times_applied": fix_info.get("times_applied", 0),
+                            })
 
                 # Phase 26: Record in decision cache on success
                 if success and tool_name not in ("think", "scan_environment"):

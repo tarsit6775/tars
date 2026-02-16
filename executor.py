@@ -506,7 +506,7 @@ class ToolExecutor:
                         try:
                             with open(path, 'r') as f:
                                 preview = f.read(1000)
-                        except:
+                        except Exception:
                             preview = "(binary file)"
                     else:
                         items = os.listdir(path)[:20]

@@ -16,6 +16,9 @@ import urllib.request
 import websocket
 import os
 
+import logging
+logger = logging.getLogger("TARS")
+
 CHROME_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 CDP_PORT = 9222
 
@@ -52,7 +55,7 @@ class CDP:
                 except (TimeoutError, RuntimeError) as e:
                     # Tab might be stuck (e.g., on a heavy travel site)
                     # Try creating a fresh tab instead
-                    print(f"    ⚠️ Existing tab unresponsive ({e}), creating fresh tab...")
+                    logger.warning(f"    ⚠️ Existing tab unresponsive ({e}), creating fresh tab...")
                     self.close()
                     fresh = self._create_fresh_tab()
                     if fresh:

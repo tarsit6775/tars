@@ -253,6 +253,10 @@ class ToolExecutor:
         elif tool_name == "generate_report":
             return self._generate_report(inp)
 
+        # ─── Self-Healing ──
+        elif tool_name == "propose_self_heal":
+            return self._propose_self_heal(inp)
+
         else:
             return {"success": False, "error": True, "content": f"Unknown tool: {tool_name}"}
 
@@ -781,6 +785,54 @@ class ToolExecutor:
             )
         except Exception as e:
             return {"success": False, "error": True, "content": f"Report generation error: {e}"}
+
+    def _propose_self_heal(self, inp):
+        """Handle propose_self_heal brain tool — brain proposes a code change to itself."""
+        description = inp.get("description", "")
+        reason = inp.get("reason", "")
+        if not description:
+            return {"success": False, "error": True, "content": "Missing 'description' parameter."}
+
+        try:
+            from brain.self_heal import SelfHealEngine
+            # Get or create the self-heal engine (tars.py owns the primary instance,
+            # but we can create one here for the proposal mechanism)
+            if not hasattr(self, '_self_heal'):
+                self._self_heal = SelfHealEngine()
+
+            proposal = self._self_heal.propose_capability(description, reason)
+
+            # Ask for approval
+            approved = self._self_heal.request_healing(
+                self.sender,
+                self.reader,
+                proposal,
+            )
+
+            if approved:
+                result = self._self_heal.execute_healing(approved, self)
+                if result.get("success"):
+                    return {
+                        "success": True,
+                        "content": (
+                            f"🩹 Self-healing COMPLETE! I modified my own code.\n"
+                            f"Change: {description[:200]}\n"
+                            f"The fix will take effect on the next task cycle."
+                        ),
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": True,
+                        "content": f"🩹 Self-healing was approved but failed: {result.get('content', 'unknown')[:300]}",
+                    }
+            else:
+                return {
+                    "success": True,
+                    "content": "🩹 Self-healing proposal was sent to Abdullah but not approved. Moving on.",
+                }
+        except Exception as e:
+            return {"success": False, "error": True, "content": f"Self-heal error: {e}"}
 
     def _deploy_agent(self, agent_type, task):
         """

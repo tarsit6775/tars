@@ -228,6 +228,39 @@ When you do ask, be SPECIFIC:
 - Saying "done" without verification"""
 
 
+TARS_SELF_HEALING = """
+### Self-Healing Powers
+
+You can MODIFY YOUR OWN CODE. If you notice a recurring failure, missing capability,
+or something that could be improved in your own behavior, use `propose_self_heal`.
+
+**When to self-heal:**
+- You keep failing at a specific task type and know what code change would fix it
+- You realize you're missing a tool/capability that would make you better
+- An error pattern keeps repeating and you know the root cause
+- You want to add a new feature to yourself
+
+**How it works:**
+1. You call `propose_self_heal` with a clear description and reason
+2. Abdullah gets an iMessage asking for approval
+3. If approved, the dev agent modifies your own codebase
+4. Tests run automatically to verify nothing broke
+5. The fix takes effect on the next task
+
+**IMPORTANT:** Only propose changes you're confident will help.
+Be specific about WHAT to change and WHY. Abdullah has to approve.
+
+**Examples of good proposals:**
+- "Add retry logic to browser agent for CAPTCHA pages"
+- "Create a new tool for reading PDFs directly"
+- "Fix timeout handling in the research agent"
+
+**Bad proposals (too vague):**
+- "Make me better"
+- "Fix everything"
+"""
+
+
 # ═══════════════════════════════════════════════════════
 #  DOMAIN KNOWLEDGE — Injected Only When Relevant
 # ═══════════════════════════════════════════════════════
@@ -446,6 +479,9 @@ def build_system_prompt(
     # ── Escalation protocol (include for tasks) ──
     if intent_type in ("TASK", "EMERGENCY", "FOLLOW_UP", ""):
         parts.append(TARS_ESCALATION)
+
+    # ── Self-healing powers (always available) ──
+    parts.append(TARS_SELF_HEALING)
 
     # ── Domain knowledge (only relevant domains) ──
     if domain_hints:

@@ -481,6 +481,40 @@ TARS_TOOLS = [
             "required": ["format", "title"]
         }
     },
+
+    # ═══════════════════════════════════════
+    #  Self-Healing (v5)
+    # ═══════════════════════════════════════
+    {
+        "name": "propose_self_heal",
+        "description": (
+            "Propose a self-healing modification to TARS's own code. "
+            "Use this when you notice a recurring failure, missing capability, "
+            "or something that could be improved in your own behavior.\n\n"
+            "This will ask Abdullah for permission via iMessage. If approved, "
+            "the dev agent will be deployed to modify TARS's codebase.\n\n"
+            "Examples:\n"
+            "- 'I keep failing at X because I don't have a tool for Y'\n"
+            "- 'My browser agent crashes when pages have CAPTCHAs'\n"
+            "- 'I need better error handling for timeout scenarios'\n\n"
+            "IMPORTANT: Only propose changes you're confident will help. "
+            "Abdullah has to approve, so be specific about WHAT and WHY."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "What capability to add or what to fix. Be specific.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this change is needed. What failure triggered this?",
+                },
+            },
+            "required": ["description", "reason"],
+        },
+    },
 ]
 
 
@@ -491,7 +525,7 @@ TARS_TOOLS = [
 # Core tools always included regardless of intent
 _CORE_TOOLS = {
     "think", "send_imessage", "wait_for_reply", "recall_memory",
-    "save_memory", "scan_environment", "checkpoint",
+    "save_memory", "scan_environment", "checkpoint", "propose_self_heal",
 }
 
 # Domain-specific tool groups

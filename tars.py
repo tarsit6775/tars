@@ -35,6 +35,7 @@ sys.path.insert(0, BASE_DIR)
 
 from brain.planner import TARSBrain
 from brain.message_parser import MessageStreamParser, MessageBatch
+from brain.self_heal import SelfHealEngine
 from executor import ToolExecutor
 from voice.imessage_send import IMessageSender
 from voice.imessage_read import IMessageReader
@@ -58,8 +59,8 @@ BANNER = """
      ██║   ██║  ██║██║  ██║███████║
      ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝
 \033[0m
-  \033[90mAutonomous Mac Agent — v4.0 Brain\033[0m
-  \033[90m"The Brain That Thinks — Phase 1-5"\033[0m
+  \033[90mAutonomous Mac Agent — v5.0 Brain\033[0m
+  \033[90m"Parallel Tasks + Self-Healing"\033[0m
   \033[90mDashboard: http://localhost:8420\033[0m
 """
 
@@ -164,6 +165,17 @@ class TARS:
 
         self.brain = TARSBrain(self.config, self.executor, self.memory)
         print("  🤖 Orchestrator brain online")
+
+        # Self-Healing Engine — monitors failures, proposes code fixes
+        self.self_heal = SelfHealEngine()
+        print("  🩹 Self-healing engine ready")
+
+        # Parallel task processing config
+        self._max_parallel_tasks = self.config.get("agent", {}).get("max_parallel_tasks", 3)
+        self._active_tasks = {}  # {task_id: threading.Thread}
+        self._active_tasks_lock = threading.Lock()
+        self._task_counter = 0
+        print(f"  ⚡ Parallel task pool (max {self._max_parallel_tasks} concurrent)")
 
         # Phase 1: Message Stream Parser
         # Accumulates back-to-back messages (3s window) and merges intelligently
@@ -356,7 +368,7 @@ class TARS:
         self._task_queue.put(batch)
 
     def _task_worker(self):
-        """Background worker that processes tasks from the queue, one at a time."""
+        """Background worker that dispatches tasks from the queue to parallel threads."""
         while self.running:
             try:
                 item = self._task_queue.get(timeout=1)
@@ -364,6 +376,12 @@ class TARS:
                 continue
 
             try:
+                # Wait if at max capacity
+                while self._count_active_tasks() >= self._max_parallel_tasks:
+                    time.sleep(0.5)
+                    if not self.running:
+                        break
+
                 # Handle both MessageBatch (new) and raw strings (legacy)
                 if isinstance(item, MessageBatch):
                     task_text = item.merged_text
@@ -372,81 +390,174 @@ class TARS:
                     task_text = str(item)
                     batch = None
 
-                print(f"\n  {'═' * 50}")
-                batch_info = f" [{batch.batch_type}]" if batch and batch.batch_type != "single" else ""
-                print(f"  📨 Message{batch_info}: {task_text[:120]}")
-                print(f"  {'═' * 50}\n")
+                # Assign task ID
+                self._task_counter += 1
+                task_id = f"task_{self._task_counter}"
 
-                self.logger.info(f"New message: {task_text}")
-                event_bus.emit("task_received", {"task": task_text, "source": "agent"})
-                event_bus.emit("status_change", {"status": "working", "label": "WORKING"})
-
-                # Reset deployment tracker (fresh agent budget) but NOT conversation
-                self.executor.reset_task_tracker()
-
-                # ── Streaming progress: debounced updates to iMessage ──
-                progress_collector = _ProgressCollector(
-                    sender=self.imessage_sender,
-                    interval=self._progress_interval,
+                # Launch in a new thread
+                t = threading.Thread(
+                    target=self._run_task,
+                    args=(task_id, task_text, batch),
+                    name=f"tars-{task_id}",
+                    daemon=True,
                 )
-                progress_collector.start()
+                with self._active_tasks_lock:
+                    self._active_tasks[task_id] = t
+                t.start()
 
-                # Send to brain — use process() for batches, think() for strings
-                # brain.process() is the Phase 4 entry point:
-                #   classify intent → route to thread → auto-recall → think → record
-                try:
-                    if batch:
-                        response = self.brain.process(batch)
-                    else:
-                        response = self.brain.think(task_text)
-                finally:
-                    progress_collector.stop()
+                active = self._count_active_tasks()
+                print(f"  ⚡ Spawned {task_id} (active: {active}/{self._max_parallel_tasks})")
+                event_bus.emit("parallel_task_started", {
+                    "task_id": task_id,
+                    "task": task_text[:100],
+                    "active_count": active,
+                })
 
-                # Log the result
-                task = task_text  # For the rest of the method
-                self.logger.info(f"Cycle complete. Response: {response[:200]}")
-
-                # ── Send the brain's final response to the user via iMessage ──
-                if response and not response.startswith("🛑"):
-                    try:
-                        self.imessage_sender.send(response[:1500])
-                    except Exception as e:
-                        self.logger.warning(f"Failed to send response via iMessage: {e}")
-
-                # ── Safety net: if brain returned an error, notify user ──
-                if response and (response.startswith("❌") or response.startswith("⚠️")):
-                    self.logger.warning(f"Brain returned error: {response[:200]}")
-                    # Brain's _emergency_notify already sent rate-limit/key messages.
-                    # Only notify for errors the brain DIDN'T already handle.
-                    try:
-                        already_notified = any(m in response.lower() for m in (
-                            "rate limit", "429", "retries",
-                            "api key", "permission_denied", "leaked",
-                        ))
-                        if not already_notified:
-                            if "Failed to call a function" in response:
-                                self.imessage_sender.send("⚠️ Had a formatting hiccup with my response. Can you repeat your request? I'll get it right this time.")
-                            else:
-                                self.imessage_sender.send(f"⚠️ Ran into an issue: {response[:300]}")
-                    except Exception:
-                        pass  # Don't crash the loop trying to send error notification
-
-                event_bus.emit("status_change", {"status": "online", "label": "ONLINE"})
-
-                print(f"\n  {'─' * 50}")
-                print(f"  ✅ Cycle complete")
-                print(f"  {'─' * 50}\n")
             except Exception as e:
-                self.logger.error(f"Task processing error: {e}")
-                print(f"  ⚠️ Task error: {e}")
-                # Notify user about crash so they're not left waiting
-                try:
-                    self.imessage_sender.send(f"⚠️ Something went wrong internally. Error: {str(e)[:200]}. Send your request again.")
-                except Exception:
-                    pass
-                event_bus.emit("status_change", {"status": "online", "label": "ONLINE"})
+                self.logger.error(f"Task dispatch error: {e}")
             finally:
                 self._task_queue.task_done()
+
+    def _count_active_tasks(self) -> int:
+        """Count currently running task threads."""
+        with self._active_tasks_lock:
+            # Clean up finished threads
+            finished = [tid for tid, t in self._active_tasks.items() if not t.is_alive()]
+            for tid in finished:
+                del self._active_tasks[tid]
+            return len(self._active_tasks)
+
+    def _run_task(self, task_id, task_text, batch):
+        """Execute a single task in its own thread.
+
+        Each task gets its own progress collector and isolated execution.
+        The brain handles thread routing internally.
+        """
+        try:
+            print(f"\n  {'═' * 50}")
+            batch_info = f" [{batch.batch_type}]" if batch and batch.batch_type != "single" else ""
+            print(f"  📨 [{task_id}] Message{batch_info}: {task_text[:120]}")
+            print(f"  {'═' * 50}\n")
+
+            self.logger.info(f"[{task_id}] New message: {task_text}")
+            event_bus.emit("task_received", {"task": task_text, "source": "agent", "task_id": task_id})
+            event_bus.emit("status_change", {"status": "working", "label": f"WORKING ({self._count_active_tasks()})" })
+
+            # Reset deployment tracker (fresh agent budget)
+            self.executor.reset_task_tracker()
+
+            # Streaming progress: debounced updates to iMessage
+            progress_collector = _ProgressCollector(
+                sender=self.imessage_sender,
+                interval=self._progress_interval,
+            )
+            progress_collector.start()
+
+            # Send to brain
+            try:
+                if batch:
+                    response = self.brain.process(batch)
+                else:
+                    response = self.brain.think(task_text)
+            finally:
+                progress_collector.stop()
+
+            # Log the result
+            self.logger.info(f"[{task_id}] Cycle complete. Response: {response[:200]}")
+
+            # Send the brain's final response to the user via iMessage
+            if response and not response.startswith("🛑"):
+                try:
+                    self.imessage_sender.send(response[:1500])
+                except Exception as e:
+                    self.logger.warning(f"[{task_id}] Failed to send response via iMessage: {e}")
+
+            # Safety net: if brain returned an error, notify user
+            if response and (response.startswith("❌") or response.startswith("⚠️")):
+                self.logger.warning(f"[{task_id}] Brain returned error: {response[:200]}")
+                self._handle_task_error(task_id, task_text, response)
+
+            # Check for self-healing opportunities on failure
+            if response and (response.startswith("❌") or response.startswith("⚠️")):
+                self._check_self_heal(task_id, task_text, response)
+
+            event_bus.emit("parallel_task_completed", {
+                "task_id": task_id,
+                "task": task_text[:100],
+                "success": not (response and response.startswith("❌")),
+                "active_count": self._count_active_tasks() - 1,
+            })
+
+            print(f"\n  {'─' * 50}")
+            print(f"  ✅ [{task_id}] Cycle complete")
+            print(f"  {'─' * 50}\n")
+
+        except Exception as e:
+            self.logger.error(f"[{task_id}] Task error: {e}")
+            print(f"  ⚠️ [{task_id}] Task error: {e}")
+            try:
+                self.imessage_sender.send(f"⚠️ Something went wrong with a task. Error: {str(e)[:200]}. Send your request again.")
+            except Exception:
+                pass
+
+            # Record failure for self-healing
+            self.self_heal.record_failure(
+                error=str(e),
+                context="task_processing",
+                details=task_text[:200],
+            )
+
+        finally:
+            # Update status — check if other tasks are still running
+            remaining = self._count_active_tasks() - 1  # -1 for this finishing thread
+            if remaining <= 0:
+                event_bus.emit("status_change", {"status": "online", "label": "ONLINE"})
+            else:
+                event_bus.emit("status_change", {"status": "working", "label": f"WORKING ({remaining})"})
+
+    def _handle_task_error(self, task_id, task_text, response):
+        """Handle error responses — notify user if brain didn't already."""
+        try:
+            already_notified = any(m in response.lower() for m in (
+                "rate limit", "429", "retries",
+                "api key", "permission_denied", "leaked",
+            ))
+            if not already_notified:
+                if "Failed to call a function" in response:
+                    self.imessage_sender.send("⚠️ Had a formatting hiccup with my response. Can you repeat your request? I'll get it right this time.")
+                else:
+                    self.imessage_sender.send(f"⚠️ Ran into an issue: {response[:300]}")
+        except Exception:
+            pass
+
+    def _check_self_heal(self, task_id, task_text, response):
+        """Check if a task failure should trigger self-healing."""
+        proposal = self.self_heal.record_failure(
+            error=response[:500],
+            context="brain_response",
+            tool="brain",
+            details=task_text[:200],
+        )
+        if proposal:
+            print(f"  🩹 [{task_id}] Self-healing proposal: {proposal.trigger[:80]}")
+            # Ask Abdullah for permission
+            approved = self.self_heal.request_healing(
+                self.imessage_sender,
+                self.imessage_reader,
+                proposal,
+            )
+            if approved:
+                print(f"  🩹 [{task_id}] Self-healing APPROVED — deploying dev agent")
+                result = self.self_heal.execute_healing(approved, self.executor)
+                heal_status = "✅ healed" if result.get("success") else "❌ failed"
+                print(f"  🩹 [{task_id}] Self-healing {heal_status}")
+                try:
+                    if result.get("success"):
+                        self.imessage_sender.send("🩹 Self-healing complete! I've patched myself. The fix will take effect on next task.")
+                    else:
+                        self.imessage_sender.send(f"🩹 Self-healing attempt didn't work: {result.get('content', 'unknown')[:200]}")
+                except Exception:
+                    pass
 
 
 class _ProgressCollector:

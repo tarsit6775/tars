@@ -664,6 +664,10 @@ class TARSBrain:
                         result.get("content", "unknown error"),
                         str(tool_input)[:200],
                     )
+                    # Feed to self-healing engine for pattern detection
+                    self._record_self_heal_failure(
+                        tool_name, result.get("content", ""), str(tool_input)[:200],
+                    )
 
                 # Phase 26: Record in decision cache on success
                 if success and tool_name not in ("think", "scan_environment"):
@@ -1173,6 +1177,25 @@ class TARSBrain:
             )
         except Exception as e:
             print(f"  ⚠️ Brain outcome recording error: {e}")
+
+    def _record_self_heal_failure(self, tool_name, error_content, details=""):
+        """Feed tool failures into the self-healing engine for pattern detection.
+
+        The self-heal engine (owned by tars.py) analyzes recurring failures
+        and can propose code modifications to fix them.
+        """
+        try:
+            # Access self-heal engine through tars instance if available
+            # The executor has a _self_heal instance created on first propose_self_heal call
+            if hasattr(self.tool_executor, '_self_heal'):
+                self.tool_executor._self_heal.record_failure(
+                    error=error_content[:500],
+                    context=f"tool_execution:{tool_name}",
+                    tool=tool_name,
+                    details=details,
+                )
+        except Exception:
+            pass  # Self-heal is optional — never crash the brain
 
     # ═══════════════════════════════════════════════════
     #  PROACTIVE ANTICIPATION (Phase 29)

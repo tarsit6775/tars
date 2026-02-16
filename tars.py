@@ -693,14 +693,12 @@ def _run_with_auto_restart():
 
             # Try to notify owner about the crash
             try:
-                from hands.imessage import iMessageSender
+                from voice.imessage_send import IMessageSender
                 import yaml
                 with open("config.yaml") as f:
                     cfg = yaml.safe_load(f)
-                phone = cfg.get("owner", {}).get("phone", "")
-                if phone:
-                    sender = iMessageSender(phone)
-                    sender.send(f"⚠️ TARS crashed: {str(e)[:150]}. Auto-restarting ({restart_count}/{max_restarts})...")
+                sender = IMessageSender(cfg)
+                sender.send(f"⚠️ TARS crashed: {str(e)[:150]}. Auto-restarting ({restart_count}/{max_restarts})...")
             except Exception:
                 pass
 
@@ -709,14 +707,12 @@ def _run_with_auto_restart():
     if restart_count >= max_restarts:
         print(f"\n  🛑 TARS hit max restarts ({max_restarts}). Stopping.")
         try:
-            from hands.imessage import iMessageSender
+            from voice.imessage_send import IMessageSender
             import yaml
             with open("config.yaml") as f:
                 cfg = yaml.safe_load(f)
-            phone = cfg.get("owner", {}).get("phone", "")
-            if phone:
-                sender = iMessageSender(phone)
-                sender.send(f"🛑 TARS has stopped after {max_restarts} crashes. Manual intervention needed.")
+            sender = IMessageSender(cfg)
+            sender.send(f"🛑 TARS has stopped after {max_restarts} crashes. Manual intervention needed.")
         except Exception:
             pass
 

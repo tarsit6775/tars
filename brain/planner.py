@@ -12,6 +12,7 @@ import os
 import re
 import time
 import json
+import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -98,6 +99,11 @@ class TARSBrain:
         self._error_db_path = os.path.join(base_dir, "memory", "error_patterns.json")
         self._load_error_patterns()
 
+        # Thread safety: parallel tasks share this brain instance.
+        # The lock serializes process() calls so conversation_history
+        # and metacognition state don't get corrupted.
+        self._lock = threading.Lock()
+
         self.conversation_history = []
         self.max_history_messages = 80
         self.compaction_token_threshold = 80000
@@ -140,6 +146,14 @@ class TARSBrain:
         13. Proactive anticipation (Phase 29)
         14. Save session state (Phase 33)
         """
+        # Thread safety: serialize brain access for parallel tasks.
+        # Without this, two tasks could corrupt conversation_history,
+        # metacognition state, and reasoning trace simultaneously.
+        with self._lock:
+            return self._process_inner(batch_or_text)
+
+    def _process_inner(self, batch_or_text) -> str:
+        """Inner process logic — called under self._lock."""
         # ── Step 1: Normalize input ──
         from brain.message_parser import MessageBatch
         if isinstance(batch_or_text, MessageBatch):

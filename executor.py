@@ -73,6 +73,7 @@ class ToolExecutor:
         # ── Deployment tracker — resets per task ──
         # Every deployment and its result, so brain sees full history
         self._deployment_log = []  # [{agent, task, success, steps, reason}]
+        self._deployment_lock = threading.Lock()  # Thread safety for parallel tasks
         self.max_deployments = config.get("safety", {}).get("max_deployments", DEFAULT_MAX_DEPLOYMENTS)
 
         # ── Dual-provider: agents use agent_llm (fast/free) ──

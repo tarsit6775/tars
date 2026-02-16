@@ -184,7 +184,7 @@ class IMessageReader:
             if dashboard_msgs:
                 reply = "\n".join(dashboard_msgs)
                 logger.info(f"  🌐 Reply from dashboard ({len(dashboard_msgs)} msg(s)): {reply[:80]}")
-                return {"success": True, "content": reply}
+                return {"success": True, "content": reply, "source": "dashboard"}
 
             # ── Check iMessage (chat.db) ──
             messages = self._get_new_messages()

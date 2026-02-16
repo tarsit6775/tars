@@ -326,13 +326,18 @@ class TARS:
 
                 if reply.get("success"):
                     task = reply["content"]
-                    event_bus.emit("imessage_received", {"message": task})
+                    msg_source = reply.get("source", "imessage")
+
+                    # Emit event for dashboard — but skip if source is
+                    # dashboard (server.py already emitted it)
+                    if msg_source != "dashboard":
+                        event_bus.emit("imessage_received", {"message": task})
 
                     # Check kill switch — stops all running agents
                     if any(kw.lower() in task.lower() for kw in self.kill_words):
                         logger.info(f"  🛑 Kill command received: {task}")
                         self._kill_event.set()
-                        event_bus.emit("kill_switch", {"source": "imessage"})
+                        event_bus.emit("kill_switch", {"source": msg_source})
                         try:
                             self.imessage_sender.send("🛑 Kill switch activated — all agents stopped.")
                         except Exception:
@@ -344,7 +349,7 @@ class TARS:
                     # Feed through the message stream parser (Phase 1)
                     # Parser accumulates for 3s, merges back-to-back messages,
                     # then calls _on_batch_ready() which queues for the brain
-                    self.message_parser.ingest(task)
+                    self.message_parser.ingest(task, source=msg_source)
                 else:
                     # Timed out — just keep waiting silently
                     logger.debug("  💤 Still waiting...")

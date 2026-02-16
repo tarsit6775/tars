@@ -129,20 +129,18 @@ class ToolExecutor:
         return getattr(self._reply_source, "source", "imessage")
 
     def send_reply(self, message: str):
-        """Send a reply routed to the correct channel (iMessage or dashboard).
+        """Send a reply to BOTH iMessage AND the dashboard (true mirror).
 
-        When the task came from the dashboard, the reply is emitted as a
-        WebSocket event so the dashboard can display it.  iMessage is also
-        sent as a fallback for now, so the user gets the message either way.
+        Every outgoing message appears on both platforms regardless of
+        where the original message came from.
         """
-        source = self.get_reply_source()
-        if source == "dashboard":
-            event_bus.emit("imessage_sent", {"message": message, "source": "dashboard"})
-            logger.info(f"  📤 Reply sent to dashboard")
-            return {"success": True, "content": f"Reply sent to dashboard"}
-        else:
-            event_bus.emit("imessage_sent", {"message": message})
-            return self.sender.send(message)
+        # 1. Always emit WS event so dashboard shows TARS's reply
+        event_bus.emit("imessage_sent", {"message": message})
+
+        # 2. Always send iMessage so phone gets it too
+        result = self.sender.send(message)
+        logger.info(f"  📤 Reply mirrored to iMessage + dashboard")
+        return result
 
     def reset_task_tracker(self):
         """Call this when a new user task starts (from tars.py)."""
@@ -202,7 +200,6 @@ class ToolExecutor:
 
         # ─── Direct Tools ────────────────────────
         elif tool_name == "send_imessage":
-            event_bus.emit("imessage_sent", {"message": inp["message"]})
             return self.send_reply(inp["message"])
 
         elif tool_name == "wait_for_reply":

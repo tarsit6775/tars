@@ -292,8 +292,10 @@ class TARS:
 
         # Notify owner that TARS is online and ready
         try:
-            self.imessage_sender.send("✅ TARS is online and all systems are functional. Ready for commands.")
-            logger.info("  📱 Startup notification sent via iMessage")
+            startup_msg = "✅ TARS is online and all systems are functional. Ready for commands."
+            self.imessage_sender.send(startup_msg)
+            event_bus.emit("imessage_sent", {"message": startup_msg})
+            logger.info("  📱 Startup notification sent via iMessage + dashboard")
         except Exception as e:
             logger.warning(f"  ⚠️ Could not send startup iMessage: {e}")
 
@@ -372,6 +374,7 @@ class TARS:
                     merged_text=task_text,
                     batch_type="single",
                     timestamp=batch.timestamp,
+                    source=batch.source,
                 )
                 self._task_queue.put(single_batch)
         else:
@@ -676,6 +679,8 @@ class _ProgressCollector:
                 msg = "⏳ Progress:\n" + "\n".join(parts)
                 try:
                     self._sender.send(msg)
+                    # Mirror progress to dashboard
+                    event_bus.emit("imessage_sent", {"message": msg})
                 except Exception:
                     pass
         else:
@@ -688,7 +693,10 @@ class _ProgressCollector:
                 agent_label = self._last_agent or "task"
                 minutes = elapsed // 60
                 try:
-                    self._sender.send(f"⏳ Still working on it... ({agent_label}, {minutes}m elapsed)")
+                    heartbeat_msg = f"⏳ Still working on it... ({agent_label}, {minutes}m elapsed)"
+                    self._sender.send(heartbeat_msg)
+                    # Mirror heartbeat to dashboard
+                    event_bus.emit("imessage_sent", {"message": heartbeat_msg})
                 except Exception:
                     pass
 

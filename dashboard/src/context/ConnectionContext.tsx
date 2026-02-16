@@ -268,6 +268,8 @@ export function TarsProvider({ children }: { children: React.ReactNode }) {
         appendLog('event', `💬 iMessage sent: ${data.message.substring(0, 100)}`, 'imessage')
         break
       case 'imessage_received':
+        // Skip if this message came from the dashboard itself (already added locally by sendMessage)
+        if (data.source === 'dashboard') break
         msgIdRef.current++
         setMessages(prev => [...prev, {
           id: msgIdRef.current, text: data.message, sender: 'user', time, timestamp: Date.now(),

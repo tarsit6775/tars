@@ -452,13 +452,15 @@ class TARSTunnel:
                     # Send initial process status
                     self._on_process_status_change(self.process_mgr.get_status())
 
-                    # Three concurrent tasks: send events, receive commands, status heartbeat
+                    # Four concurrent tasks: send events, receive commands, status heartbeat,
+                    # and local WS listener (bridges events from externally-started TARS)
                     send_task = asyncio.create_task(self._send_loop(ws))
                     recv_task = asyncio.create_task(self._recv_loop(ws))
                     heartbeat_task = asyncio.create_task(self._status_heartbeat())
+                    local_listener_task = asyncio.create_task(self._local_ws_listener())
 
                     done, pending = await asyncio.wait(
-                        [send_task, recv_task, heartbeat_task],
+                        [send_task, recv_task, heartbeat_task, local_listener_task],
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     for t in pending:
@@ -614,6 +616,39 @@ class TARSTunnel:
                     await self.ws.send(response)
         except Exception:
             pass
+
+    async def _local_ws_listener(self):
+        """Persistently listen to the local TARS WS server and forward events to relay.
+
+        When TARS runs as a separate process (not spawned by tunnel),
+        the patched event_bus.emit doesn't catch its events. This task
+        connects to the local WS at :8421, subscribes to the event stream,
+        and forwards everything to the relay — bridging the gap.
+        """
+        import websockets
+        while self.running:
+            try:
+                async with websockets.connect(
+                    "ws://localhost:8421",
+                    ping_interval=10,
+                    ping_timeout=5,
+                ) as local_ws:
+                    logger.info("  [+] Local WS listener connected (event bridge active)")
+                    async for message in local_ws:
+                        try:
+                            event = json.loads(message)
+                            # Forward to relay (avoid duplicating events the patched
+                            # emit already sent — those have ts_unix set by on_event_sync).
+                            # Events from the local WS won't have ts_unix, so we add it.
+                            if "ts_unix" not in event:
+                                event["ts_unix"] = time.time()
+                            if self.ws:
+                                await self.ws.send(json.dumps(event))
+                        except json.JSONDecodeError:
+                            pass
+            except Exception:
+                # Local TARS WS not ready yet — wait and retry
+                await asyncio.sleep(3)
 
     def stop(self):
         """Stop the tunnel (and TARS if running)."""

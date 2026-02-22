@@ -256,6 +256,8 @@ def _parse_failed_tool_call(error):
                     cleaned = re.sub(r',\s*}', '}', args_raw)
                     # Fix escaped quotes
                     cleaned = cleaned.replace('\\"', '"')
+                    # Fix Llama's escaped single quotes
+                    cleaned = cleaned.replace("\\'", "'")
                     args = json.loads(cleaned)
                 except json.JSONDecodeError:
                     logger.warning(f"[Parser] Could not parse args: {args_raw[:200]}")
@@ -464,7 +466,7 @@ def _convert_history_for_gemini(messages, system_prompt):
                     parts=[_genai_types.Part(text=content)],
                 ))
             elif isinstance(content, list):
-                # Tool results → function_response parts
+                # Tool results → function_response parts (may include images)
                 parts = []
                 for item in content:
                     if isinstance(item, dict) and item.get("type") == "tool_result":
@@ -483,6 +485,24 @@ def _convert_history_for_gemini(messages, system_prompt):
                                 response=response_dict,
                             )
                         ))
+                        
+                        # Vision support: if tool result has image data, add as inline image
+                        # This lets Gemini actually SEE screenshots from the browser agent
+                        img_b64 = item.get("_image_base64")
+                        if img_b64:
+                            try:
+                                import base64 as _b64
+                                img_bytes = _b64.b64decode(img_b64)
+                                img_mime = item.get("_image_mime", "image/jpeg")
+                                parts.append(_genai_types.Part.from_bytes(
+                                    data=img_bytes,
+                                    mime_type=img_mime,
+                                ))
+                                parts.append(_genai_types.Part(
+                                    text="[Above is a screenshot of the current browser page. Use it to see the actual visual layout, buttons, fields, errors, CAPTCHAs, and anything the text description might miss.]"
+                                ))
+                            except Exception:
+                                pass  # If image decoding fails, text-only fallback
                 if parts:
                     gemini_contents.append(_genai_types.Content(
                         role="user",
@@ -931,6 +951,38 @@ class RetryStreamWrapper:
 
 
 # ─────────────────────────────────────────────
+#  Anthropic Stream Wrapper
+#  (Normalizes Anthropic streaming responses
+#   to use our ContentBlock/LLMResponse types)
+# ─────────────────────────────────────────────
+
+class AnthropicStreamWrapper:
+    """Wraps Anthropic's MessageStream so get_final_message() returns our normalized LLMResponse."""
+
+    def __init__(self, client, wrap_fn, **kwargs):
+        self._client = client
+        self._wrap_fn = wrap_fn
+        self._kwargs = kwargs
+        self._stream = None
+
+    def __enter__(self):
+        self._stream = self._client.messages.stream(**self._kwargs)
+        self._inner = self._stream.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        if self._stream:
+            self._stream.__exit__(*args)
+
+    def __iter__(self):
+        yield from self._inner
+
+    def get_final_message(self):
+        raw = self._inner.get_final_message()
+        return self._wrap_fn(raw)
+
+
+# ─────────────────────────────────────────────
 #  Main LLM Client
 # ─────────────────────────────────────────────
 
@@ -985,7 +1037,7 @@ class LLMClient:
         exp = min(cap, base * (2 ** attempt))
         return random.uniform(0, exp)
 
-    def create(self, model, max_tokens, system, tools, messages, temperature=0):
+    def create(self, model, max_tokens, system, tools, messages, temperature=0, tool_choice=None):
         """Create a completion (non-streaming). Returns normalized LLMResponse.
         
         Includes recovery logic for Groq/Llama tool_use_failed errors —
@@ -998,6 +1050,7 @@ class LLMClient:
           attempt 3: random(0, 4.0s)  … capped at 30s
         
         temperature=0 by default for deterministic tool calls.
+        tool_choice: "auto" (default), "required" (force tool use), or None.
         """
         if self._mode == "anthropic":
             resp = self._client.messages.create(
@@ -1057,13 +1110,16 @@ class LLMClient:
             max_retries = 5
             for attempt in range(1, max_retries + 1):
                 try:
-                    resp = self._client.chat.completions.create(
-                        model=model,
-                        max_tokens=max_tokens,
-                        tools=openai_tools if openai_tools else None,
-                        messages=openai_messages,
-                        temperature=temperature,
-                    )
+                    kwargs = {
+                        "model": model,
+                        "max_tokens": max_tokens,
+                        "messages": openai_messages,
+                        "temperature": temperature,
+                    }
+                    if openai_tools:
+                        kwargs["tools"] = openai_tools
+                        kwargs["tool_choice"] = tool_choice or "auto"
+                    resp = self._client.chat.completions.create(**kwargs)
                     return _openai_response_to_normalized(resp)
                 except Exception as e:
                     error_str = str(e)
@@ -1117,7 +1173,7 @@ class LLMClient:
             )
             if temperature is not None:
                 kwargs["temperature"] = temperature
-            return self._client.messages.stream(**kwargs)
+            return AnthropicStreamWrapper(self._client, self._wrap_anthropic_response, **kwargs)
         elif self._mode == "gemini":
             # ── Google GenAI SDK streaming ──
             gemini_tools = _anthropic_to_gemini_tools(tools)
@@ -1156,7 +1212,28 @@ class LLMClient:
     # ── Helper ──
 
     def _wrap_anthropic_response(self, resp):
-        """Wrap native Anthropic response into our normalized format (pass-through)."""
-        # Anthropic responses already have .content, .stop_reason, .usage
-        # that match our expected interface, so just return as-is
-        return resp
+        """Normalize native Anthropic response into our LLMResponse format.
+        
+        Anthropic SDK returns objects with .content (list of ContentBlock),
+        .stop_reason, and .usage. We wrap them into our normalized classes
+        so all providers return the exact same type, preventing isinstance()
+        mismatches downstream.
+        """
+        blocks = []
+        for block in resp.content:
+            if block.type == "text":
+                blocks.append(ContentBlock("text", text=block.text))
+            elif block.type == "tool_use":
+                blocks.append(ContentBlock(
+                    "tool_use",
+                    name=block.name,
+                    input_data=block.input,
+                    block_id=block.id,
+                ))
+
+        stop_reason = "tool_use" if resp.stop_reason == "tool_use" else "end_turn"
+        usage = Usage(
+            input_tokens=getattr(resp.usage, "input_tokens", 0),
+            output_tokens=getattr(resp.usage, "output_tokens", 0),
+        )
+        return LLMResponse(content=blocks, stop_reason=stop_reason, usage=usage)

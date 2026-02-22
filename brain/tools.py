@@ -130,7 +130,7 @@ TARS_TOOLS = [
     },
     {
         "name": "deploy_research_agent",
-        "description": "Deploy Research Agent v2.0 — world-class deep researcher and analyst.\n\n15+ specialized tools: multi_search (2-5 queries at once), deep_read (scroll through 50K+ char pages), extract_table (pricing/specs/schedules), compare (side-by-side tables), follow_links (discover subpages), calculate (math/percentages), convert (unit conversion), date_calc (date arithmetic), research_plan (track progress), score_sources (credibility scoring).\n\nSource credibility scoring: 3-tier domain authority system (80+ trusted domains). Notes with confidence levels (high/medium/low) and source attribution.\n\nREAD-ONLY — cannot interact with websites (no clicking, no form filling, no signups).\nUse for finding info BEFORE deploying other agents.\n\n✅ GOOD: 'Compare MacBook Pro vs Dell XPS vs ThinkPad X1. Research specs, prices, reviews from 3+ sources. Build comparison table.'\n✅ GOOD: 'Research best noise-cancelling headphones under $300. Check reviews from RTINGS, WireCutter, Reddit.'\n❌ BAD: 'Find me flights' — use search_flights tool directly, NOT research agent\n❌ BAD: 'Book me a flight' — use browser agent for booking",
+        "description": "Deploy Research Agent v3.0 — PhD-level research intelligence with 25+ tools.\n\nAPI-FIRST architecture: Serper Google Search API, Wikipedia REST API, Yahoo Finance, Semantic Scholar, arXiv, Google News — all instant, zero CAPTCHAs. Chrome CDP browser as fallback only.\n\n🔍 Search: web_search (Google API), multi_search (2-5 queries), news_search (current events)\n📚 Knowledge: wiki_search (instant facts), wiki_article (full articles)\n📈 Finance: stock_quote (real-time prices/charts), finance_search (find tickers)\n🎓 Academic: academic_search (Semantic Scholar), arxiv_search (preprints)\n🌐 Read: browse (HTTP-first), deep_read (50K chars), extract, extract_table, follow_links\n✅ Verify: fact_check (cross-reference claims), cross_reference (independent corroboration)\n📝 Track: note (with citations), compare (tables), research_plan, score_sources\n📊 Calculate: calculate, convert, date_calc\n\nFact-checking: Every important claim is cross-referenced across 2+ sources. Citation system with [1] footnotes.\n\nREAD-ONLY — cannot interact with websites.\n\n✅ GOOD: 'Research NVIDIA stock performance vs AMD over the last year. Include current prices, P/E ratios, market cap, and analyst ratings.'\n✅ GOOD: 'What are the latest peer-reviewed studies on intermittent fasting? Check PubMed and Semantic Scholar.'\n✅ GOOD: 'Compare the top 3 electric SUVs under $50K — specs, range, reviews, total cost of ownership.'\n❌ BAD: 'Find flights' — use search_flights tool\n❌ BAD: 'Book a hotel' — use browser agent",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -156,7 +156,30 @@ TARS_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "task": {"type": "string", "description": "COMPLETE development task: project path, what to build/change, tech preferences, constraints, expected behavior."}
+                "task": {"type": "string", "description": "COMPLETE development task: what to build/change, tech preferences, constraints, expected behavior."},
+                "project_path": {"type": "string", "description": "Absolute path to the project root (e.g. /Users/abdullah/Downloads/tars-main). Auto-prepended to the task."}
+            },
+            "required": ["task"]
+        }
+    },
+    {
+        "name": "deploy_screen_agent",
+        "description": "Deploy Screen Agent — controls the Mac like a human using VISION. Sees the screen through screenshots, clicks by coordinates, types with keyboard.\n\nUnlike the Browser Agent (which uses DOM parsing + CSS selectors), the Screen Agent:\n• SEES the actual screen through screenshots sent to a vision LLM\n• Clicks at exact screen coordinates based on what it sees (like a human pointing)\n• Uses real macOS mouse + keyboard input (indistinguishable from human)\n• Works on ANY application — Chrome, Safari, Finder, System Settings, any app\n• Handles CAPTCHAs, iframes, Shadow DOM, and anti-bot detection naturally\n• No DOM parsing, no CSS selectors, no Chrome DevTools Protocol\n\n**When to use Screen Agent vs Browser Agent:**\n- Screen Agent: Sites with anti-bot detection (Instagram, Google), CAPTCHAs, complex dynamic UIs, non-browser apps, anything where DOM parsing fails\n- Browser Agent: Simple web forms, data extraction, basic navigation where speed matters\n\n**The Screen Agent is SLOWER but MORE RELIABLE** — it works exactly like a human sitting at the screen.\n\n✅ GOOD: 'Open Google Chrome, navigate to https://instagram.com/accounts/emailsignup. Fill in the signup form: email tarsitgroup@outlook.com, full name TARS Bot, username tarsbot2026, password MyStr0ng!Pass. Click Sign Up. Handle any CAPTCHAs, birthday forms, or verification steps. When you see the Instagram home feed, call done.'\n✅ GOOD: 'Open System Settings, go to Wi-Fi, and check if connected to a network. Take a screenshot to confirm.'\n✅ GOOD: 'Open Finder, navigate to ~/Desktop, select all .pdf files, and move them to ~/Documents/PDFs'\n❌ BAD: 'Browse instagram' — give COMPLETE instructions with exact values",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "COMPLETE visual task: what app to use, what to do step by step, exact values to type, what success looks like. The agent sees the screen and acts like a human."}
+            },
+            "required": ["task"]
+        }
+    },
+    {
+        "name": "deploy_email_agent",
+        "description": "Deploy Email Agent — dedicated email management specialist with 30+ tools.\n\nCapabilities: read inbox, compose & send (plain text + HTML), reply, reply-all, forward, advanced search, CC/BCC, attachments, drafts, folder management, delete/archive/move, flag, mark read/unread, download attachments, email templates, follow-up tracking, contact lookup, AUTO-RULES (persistent rules that auto-apply to new emails), INBOX SUMMARIZATION (priority/regular/newsletter grouping), THREAD TRACKING (view full conversation threads).\n\nAccount: tarsitgroup@outlook.com (Mac Mail.app).\n\n✅ GOOD: 'Read my last 10 emails, find any from Amazon, and forward them to accounting@company.com with a note: Please process these invoices.'\n✅ GOOD: 'Create a rule to auto-archive all newsletters from noreply@*.com'\n✅ GOOD: 'Summarize my inbox and show me what needs attention'\n✅ GOOD: 'Show me the full thread for the email about Q4 Report'\n❌ BAD: 'Send an email' — specify recipient, subject, body\n❌ BAD: 'Check email' — specify what you want to know\n\nFor SIMPLE email ops (send one email, check unread), use `mac_mail` directly. Deploy email agent for COMPLEX multi-step email tasks.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "COMPLETE email task: what to do, which emails, recipients, content, attachments, follow-up needs."}
             },
             "required": ["task"]
         }
@@ -167,13 +190,25 @@ TARS_TOOLS = [
     # ═══════════════════════════════════════
     {
         "name": "send_imessage",
-        "description": "Send an iMessage to Abdullah. This is your ONLY output channel — Abdullah NEVER sees your text responses.\n\n**ONE message per task. Short and sweet.**\n\nRules:\n- Send ONE message with the result. Don't send 'On it' then the result separately.\n- Keep it under 2-3 sentences. If detail is needed, email it and say 'Emailed you the details.'\n- No progress updates ('Working on it...', 'Almost done...'). The dashboard handles that.\n- For tasks >60s, you may send ONE brief ack, then ONE result. Max 2 messages ever.\n- Conversational tone, contractions (it's, don't, won't). You're TARS, not a corporate bot.\n- NEVER narrate actions ('I am now deploying...'). Just do it and report.\n\nGood:\n- \"Toronto → London, $487 direct on AC. Want me to book?\"\n- \"Done ✅ — report's on your Desktop.\"\n- \"Found the bug — API key expired. Already rotated it.\"\n- \"Emailed you the full research breakdown.\"\n\nBad:\n- \"On it. Searching for flights now.\" (don't ack short tasks)\n- \"I have successfully completed the task.\"\n- Long multi-paragraph messages with bullet lists (email those instead)",
+        "description": "Send an iMessage to Abdullah. This is your ONLY output channel — Abdullah NEVER sees your text responses.\n\n**Do ALL work silently, then send ONE message with the result. ZERO progress/ack messages.**\n\nRules:\n- NEVER send 'On it', 'Gimme a sec', 'Working on it', or ANY pre-work message. ONLY results.\n- Keep it under 2-3 sentences. For details → send_imessage_file or email.\n- Conversational tone, contractions (it's, don't, won't). You're TARS, not a corporate bot.\n- NEVER narrate actions ('I am now deploying...'). Just do it and report.\n- Long messages are auto-split into multiple iMessages — no need to worry about length.\n\nGood:\n- \"Toronto → London, $487 direct on AC. Want me to book?\"\n- \"Done ✅ — report's on your Desktop.\"\n- \"Found the bug — API key expired. Already rotated it.\"\n\nBad:\n- \"On it.\" or \"Gimme a sec\" or \"Looking into it...\" (NEVER send these)\n- \"I have successfully completed the task.\"\n- Long multi-paragraph messages with bullet lists (send as file instead)",
         "input_schema": {
             "type": "object",
             "properties": {
                 "message": {"type": "string", "description": "The iMessage to send. Write naturally — like texting a friend who's also a genius."}
             },
             "required": ["message"]
+        }
+    },
+    {
+        "name": "send_imessage_file",
+        "description": "Send a file (image, PDF, report, spreadsheet, etc.) to Abdullah via iMessage.\n\nThe file appears inline in the chat — images show as previews, PDFs as attachments.\nOptionally include a brief caption that's sent as a text message right before the file.\n\nExamples:\n  send_imessage_file(file_path='/tmp/report.xlsx', caption='Here\'s the full breakdown')\n  send_imessage_file(file_path='~/Desktop/screenshot.png')\n  send_imessage_file(file_path='/tmp/analysis.pdf', caption='Full research attached')",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Absolute path to the file to send. Supports ~/ expansion."},
+                "caption": {"type": "string", "description": "Optional brief text message sent right before the file (e.g. 'Here\'s the report')."}
+            },
+            "required": ["file_path"]
         }
     },
     {
@@ -213,6 +248,29 @@ TARS_TOOLS = [
                 "query": {"type": "string", "description": "What to search for (keywords, not full sentences)"}
             },
             "required": ["query"]
+        }
+    },
+    {
+        "name": "list_memories",
+        "description": "List all stored memories — shows everything TARS remembers, organized by category.\n\nCategories: preference, credential, learned, context, project, history, agent\n\nUse when the user asks:\n- 'What do you remember?'\n- 'Show me your memories'\n- 'What do you know about me?'\n- 'List your preferences/credentials/etc.'\n\nExamples:\n  list_memories() — show everything\n  list_memories(category='preference') — just preferences\n  list_memories(category='credential') — just saved logins",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "enum": ["preference", "credential", "learned", "context", "project", "history", "agent"], "description": "Optional filter — only list memories from this category. If omitted, lists all."}
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "delete_memory",
+        "description": "Delete a specific memory or wipe an entire category.\n\nUse when the user asks:\n- 'Forget about X'\n- 'Delete my credentials'\n- 'Clear your memory'\n- 'Remove that preference'\n- 'Start fresh / wipe everything'\n\nExamples:\n  delete_memory(category='credential', key='instagram_account') — delete one credential\n  delete_memory(category='preference') — wipe ALL preferences\n  delete_memory(category='agent', key='browser') — reset browser agent learning\n  delete_memory(category='all') — FULL MEMORY WIPE\n\n⚠️ category='all' is destructive — confirm with user first!",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "enum": ["preference", "credential", "learned", "context", "project", "history", "agent", "all"], "description": "Which memory category to delete from. 'all' wipes everything."},
+                "key": {"type": "string", "description": "Specific entry to delete (e.g. 'instagram_account'). If omitted, deletes the entire category."}
+            },
+            "required": ["category"]
         }
     },
 
@@ -255,22 +313,165 @@ TARS_TOOLS = [
     },
 
     # ═══════════════════════════════════════
+    #  Account Management (Keychain-backed)
+    # ═══════════════════════════════════════
+    {
+        "name": "manage_account",
+        "description": "Manage website accounts and credentials. Passwords are stored in macOS Keychain (encrypted).\n\nActions:\n- 'store'        → Save credentials after signup/login (password → Keychain)\n- 'lookup'       → Get credentials for a service (retrieves password from Keychain)\n- 'list'         → List all stored accounts (no passwords shown)\n- 'delete'       → Remove an account and its Keychain entry\n- 'get_playbook' → Get step-by-step login/signup instructions for a site\n- 'read_otp'     → Read verification/OTP code from Apple Mail\n- 'get_emails'   → Get available TARS email addresses for signups\n- 'generate_credentials' → Auto-generate secure password, username, and pick email for a service\n\nWorkflow for signups (PREFERRED — auto-generates everything):\n1. manage_account('generate_credentials', service='doordash') → get email, password, username, name, company\n2. deploy_browser_agent with ALL generated credentials in the task\n3. manage_account('store', service='doordash', username='tarsitgroup@outlook.com', password='<generated>')\n\nWorkflow for logins:\n1. manage_account('lookup', service='github') → get stored credentials\n2. deploy_browser_agent with credentials\n\nExamples:\n  manage_account('generate_credentials', service='stripe') → auto-generates everything\n  manage_account('store', service='github', username='tarsbot', password='MyP@ss!', email='tarsitgroup@outlook.com')\n  manage_account('lookup', service='reddit')\n  manage_account('get_playbook', service='outlook', flow='signup')\n  manage_account('read_otp', from_sender='noreply@github.com', subject_contains='verification')\n\nSupported playbooks: google, outlook, github, linkedin, twitter, reddit, amazon, instagram, doordash, stripe",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["store", "lookup", "list", "delete", "get_playbook", "read_otp", "get_emails", "generate_credentials", "generate_totp"]},
+                "service": {"type": "string", "description": "Service name (e.g. 'github', 'reddit', 'outlook')"},
+                "username": {"type": "string", "description": "Username or email for the account"},
+                "password": {"type": "string", "description": "Password (stored encrypted in macOS Keychain)"},
+                "email": {"type": "string", "description": "Email used for the account (defaults to username)"},
+                "display_name": {"type": "string", "description": "Display name on the service"},
+                "flow": {"type": "string", "enum": ["login", "signup"], "description": "Login or signup flow (for get_playbook)"},
+                "from_sender": {"type": "string", "description": "Sender to look for (read_otp action)"},
+                "subject_contains": {"type": "string", "description": "Subject keyword filter (read_otp action)"},
+                "notes": {"type": "string", "description": "Extra notes about the account"},
+                "has_2fa": {"type": "boolean", "description": "Whether this account has 2FA enabled"},
+                "totp_secret": {"type": "string", "description": "TOTP secret (base32) for 2FA. Store with 'store' action, generate codes with 'generate_totp' action."},
+                "recovery_email": {"type": "string", "description": "Recovery email for the account"},
+                "status": {"type": "string", "description": "Account status", "default": "active"}
+            },
+            "required": ["action"]
+        }
+    },
+
+    # ═══════════════════════════════════════
     #  Direct Mac Control (brain-level, no agent needed)
     # ═══════════════════════════════════════
     {
         "name": "mac_mail",
-        "description": "Email via Mac's Mail.app (logged in as tarsitgroup@outlook.com). Actions:\n- 'send' → send email (with optional file attachment)\n- 'unread' → get unread count\n- 'inbox' → read latest emails\n- 'read' → read specific email by index\n- 'search' → search by keyword\n- 'verify_sent' → check Sent folder to confirm an email was actually delivered\n\nExamples:\n  mac_mail('send', to='bob@gmail.com', subject='Report', body='See attached.', attachment_path='/Users/abdullah/Documents/TARS_Reports/report.xlsx')\n  mac_mail('verify_sent', subject='Report') — confirms it landed in Sent\n  mac_mail('inbox', count=10)",
+        "description": "Email via Mac's Mail.app (logged in as tarsitgroup@outlook.com). Quick email ops without deploying an agent.\n\nActions:\n- 'send' → send email (plain/HTML, CC/BCC, attachments)\n- 'unread' → get unread count\n- 'inbox' → read latest emails\n- 'read' → read specific email by index\n- 'search' → search by keyword/sender/subject\n- 'verify_sent' → check Sent folder to confirm delivery\n- 'reply' → reply to an email by index\n- 'forward' → forward an email to someone\n- 'delete' → delete an email (move to Trash)\n- 'archive' → archive an email\n- 'move' → move email to another folder\n- 'flag' → flag/unflag an email\n- 'mark_read' / 'mark_unread' → toggle read status\n- 'drafts' → list draft emails\n- 'list_folders' → list all mailboxes/folders\n- 'download_attachments' → download attachments from an email\n- 'summarize' → smart inbox summary (groups by priority/regular/newsletters, top senders, unread counts)\n- 'categorize' → auto-categorize inbox into priority/meeting/regular/newsletter/notification with confidence scores\n- 'thread' → get full conversation thread by subject (groups Re:/Fwd: emails chronologically)\n- 'run_rules' → manually apply auto-rules to existing inbox messages\n- 'quick_reply' → one-click reply using a template (acknowledge/confirm_meeting/decline_meeting/will_review/follow_up/thank_you/out_of_office/request_info)\n- 'suggest_replies' → analyze email and suggest appropriate quick reply types\n- 'list_quick_replies' → list all available quick reply templates\n- 'save_template' → save a reusable email template\n- 'list_templates' → list saved email templates\n- 'send_template' → send an email using a saved template with variable substitution\n- 'schedule' → schedule an email for later sending\n- 'list_scheduled' → list pending scheduled emails\n- 'cancel_scheduled' → cancel a scheduled email\n- 'batch_read' → mark multiple emails as read at once\n- 'batch_delete' → delete multiple emails at once\n- 'batch_move' → move multiple emails to a folder\n- 'batch_forward' → forward multiple emails to someone\n- 'add_rule' → create a persistent auto-rule for incoming emails\n- 'list_rules' → list all auto-rules\n- 'delete_rule' → delete an auto-rule\n- 'toggle_rule' → enable/disable an auto-rule\n- 'followup' → track an email for follow-up if no reply\n- 'check_followups' → check for overdue follow-ups\n- 'lookup_contact' → find email address by contact name (TARS + macOS Contacts)\n- 'add_contact' → add or update a contact in TARS contacts database\n- 'list_contacts' → list all TARS contacts (optional tag filter)\n- 'search_contacts' → search contacts by name/email/tag/notes\n- 'delete_contact' → delete a contact by ID or email\n- 'auto_learn_contacts' → scan inbox to auto-discover and save new contacts\n- 'snooze' → snooze an email (mark read now, resurface later: '2h', 'tomorrow', 'monday', ISO timestamp)\n- 'list_snoozed' → list all snoozed emails with resurface times\n- 'cancel_snooze' → cancel a snooze and resurface immediately\n- 'priority_inbox' → get inbox sorted by 0-100 priority score (urgency, sender reputation, recency)\n- 'sender_profile' → get sender statistics and relationship info\n- 'digest' → generate daily email briefing (stats, top priority, follow-ups, snoozed)\n- 'set_ooo' → set out-of-office auto-reply with date range (start_date, end_date, ooo_message, optional exceptions list)\n- 'cancel_ooo' → cancel active out-of-office\n- 'ooo_status' → check if OOO is active and get details\n- 'analytics' → comprehensive email analytics (volume, communicators, follow-ups, snooze, rules, health score; optional period: day/week/month)\n- 'email_health' → email health score 0-100 with contributing factors and grade\n- 'stats' → get email statistics for dashboard\n- 'clean_sweep' → bulk archive/delete old low-priority emails (older_than_days, categories, dry_run=true for preview)\n- 'auto_triage' → auto-categorize and sort latest emails into priority/action_needed/FYI/archive_candidate\n- 'inbox_zero_status' → current inbox zero progress (total count, trend, streak, category breakdown)\n- 'smart_unsubscribe' → detect newsletter/marketing and unsubscribe link for an email\n- 'build_attachment_index' → scan inbox and index all attachments (filename, size, sender, date)\n- 'search_attachments' → search attachment index by filename/sender/file_type\n- 'attachment_summary' → summary of attachment storage (total count, total size, by type)\n- 'list_saved_attachments' → list downloaded attachments in TARS storage (optional folder/file_type filter)\n- 'score_relationships' → score all contacts by relationship strength (frequency, recency, reciprocity)\n- 'detect_vips' → auto-detect VIP contacts based on relationship score threshold\n- 'relationship_report' → detailed relationship report for a specific contact\n- 'communication_graph' → top-N communication partners with stats\n- 'decay_contacts' → decay stale contacts inactive for N days\n\n🖊️ Smart Compose & Writing:\n- 'smart_compose' → AI-compose email from prompt (tone: formal/friendly/urgent/apologetic/enthusiastic/concise/diplomatic, style: concise/detailed/bullet_points/executive_summary/action_oriented)\n- 'rewrite_email' → AI-rewrite existing email text in a new tone/style\n- 'adjust_tone' → change just the tone of existing email text\n- 'suggest_subject_lines' → generate subject line options from email body\n- 'proofread_email' → check grammar, spelling, clarity, professionalism\n- 'compose_reply_draft' → AI-draft a reply to an email by index with instructions\n\n📋 Email Delegation:\n- 'delegate_email' → delegate an email task to someone (delegate_to, instructions, deadline_hours)\n- 'list_delegations' → list all delegations (optional status filter: pending/in_progress/completed/cancelled)\n- 'update_delegation' → update delegation status/notes (delegation_id, status, notes)\n- 'complete_delegation' → mark delegation as completed with outcome\n- 'cancel_delegation' → cancel a delegation with reason\n- 'delegation_dashboard' → overview of all delegations with stats\n- 'nudge_delegation' → send a reminder for an overdue delegation\n\n🔍 Contextual Search & Memory:\n- 'contextual_search' → natural language email search (\"emails from John about the project last week\")\n- 'build_search_index' → rebuild the email search index\n- 'conversation_recall' → recall full conversation history with a contact\n- 'search_by_date_range' → search emails within a date range with optional keyword\n- 'find_related_emails' → find emails related to a given email by index\n\n🏷️ Labels & Tags:\n- 'add_label' → add a custom label/tag to an email by index\n- 'remove_label' → remove a label from an email\n- 'list_labels' → list all labels with email counts\n- 'get_labeled_emails' → get all emails with a specific label\n- 'bulk_label' → apply a label to multiple emails at once (indices list)\n\n📰 Newsletter Management:\n- 'detect_newsletters' → scan inbox for newsletter/subscription emails\n- 'newsletter_digest' → generate a digest of recent newsletters\n- 'newsletter_stats' → stats on newsletter volume, top sources\n- 'newsletter_preferences' → set preference per newsletter sender (keep/archive/unsubscribe)\n- 'apply_newsletter_preferences' → apply saved preferences to inbox (dry_run=true for preview)\n\n🤖 Auto-Responder:\n- 'create_auto_response' → create conditional auto-response rule (name, conditions, response_body)\n- 'list_auto_responses' → list all auto-response rules\n- 'update_auto_response' → update an auto-response rule\n- 'delete_auto_response' → delete an auto-response rule\n- 'toggle_auto_response' → enable/disable an auto-response\n- 'auto_response_history' → view history of sent auto-responses\n\n✍️ Email Signatures:\n- 'create_signature' → create a reusable email signature\n- 'list_signatures' → list all signatures\n- 'update_signature' → update a signature\n- 'delete_signature' → delete a signature\n- 'set_default_signature' → set default signature\n- 'get_signature' → get a signature by ID or default\n\n👤 Email Aliases / Identities:\n- 'add_alias' → add a sender alias/identity\n- 'list_aliases' → list all aliases\n- 'update_alias' → update an alias\n- 'delete_alias' → delete an alias\n- 'set_default_alias' → set default sender alias\n\n💾 Email Export / Archival:\n- 'export_emails' → export recent emails to JSON/text file\n- 'export_thread' → export a full thread to file\n- 'backup_mailbox' → full mailbox backup\n- 'list_backups' → list all exports and backups\n- 'search_exports' → search through exported emails\n- 'export_stats' → export/backup statistics\n\n📝 Email Templates (Advanced):\n- 'create_template' → create reusable email template with {{variable}} placeholders\n- 'list_templates' → list all templates (optional category filter)\n- 'get_template' → get template details by ID\n- 'update_template' → update a template\n- 'delete_template' → delete a template\n- 'use_template' → render template with variable substitutions\n\n📄 Draft Management:\n- 'save_draft' → save email as managed draft\n- 'list_drafts_managed' → list all saved drafts\n- 'get_draft' → get draft details by ID\n- 'update_draft' → update a saved draft\n- 'delete_draft' → delete a saved draft\n\n📁 Folder Management:\n- 'create_mail_folder' → create a new mailbox folder\n- 'list_mail_folders' → list all mailbox folders\n- 'rename_mail_folder' → rename a folder\n- 'delete_mail_folder' → delete a folder\n- 'move_to_folder' → move email to a specific folder by index\n- 'get_folder_stats' → email count per folder\n\n📊 Email Tracking:\n- 'track_email' → track a sent email for reply status\n- 'list_tracked_emails' → list all tracked emails\n- 'get_tracking_status' → tracking details for a specific email\n- 'tracking_report' → tracking summary report\n- 'untrack_email' → stop tracking an email\n\n📦 Extended Batch Operations:\n- 'batch_archive' → archive multiple emails at once (indices list)\n- 'batch_reply' → reply to multiple emails with the same body\n\n📅 Calendar Integration:\n- 'email_to_event' → create calendar event from an email\n- 'list_email_events' → list all email-created calendar events\n- 'upcoming_from_email' → upcoming events created from emails\n- 'meeting_conflicts' → check meeting conflicts on a date\n- 'sync_email_calendar' → email-calendar sync summary\n\n📈 Dashboard & Reporting:\n- 'email_dashboard' → comprehensive email dashboard overview\n- 'weekly_report' → weekly email activity summary\n- 'monthly_report' → monthly email activity summary\n- 'productivity_score' → email productivity rating 0-100 with grade\n- 'email_trends' → email trend analysis over N days\n\nFor COMPLEX multi-step email tasks, use deploy_email_agent instead.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["unread", "inbox", "read", "search", "send", "verify_sent"]},
-                "count": {"type": "integer", "description": "Emails to read (inbox action)", "default": 5},
-                "index": {"type": "integer", "description": "Email index (read action)"},
+                "action": {"type": "string", "enum": ["unread", "inbox", "read", "search", "send", "verify_sent", "reply", "forward", "delete", "archive", "move", "flag", "mark_read", "mark_unread", "drafts", "list_folders", "download_attachments", "summarize", "categorize", "thread", "run_rules", "quick_reply", "suggest_replies", "list_quick_replies", "save_template", "list_templates", "send_template", "schedule", "list_scheduled", "cancel_scheduled", "batch_read", "batch_delete", "batch_move", "batch_forward", "add_rule", "list_rules", "delete_rule", "toggle_rule", "followup", "check_followups", "lookup_contact", "add_contact", "list_contacts", "search_contacts", "delete_contact", "auto_learn_contacts", "snooze", "list_snoozed", "cancel_snooze", "priority_inbox", "sender_profile", "digest", "set_ooo", "cancel_ooo", "ooo_status", "analytics", "email_health", "stats", "clean_sweep", "auto_triage", "inbox_zero_status", "smart_unsubscribe", "build_attachment_index", "search_attachments", "attachment_summary", "list_saved_attachments", "score_relationships", "detect_vips", "relationship_report", "communication_graph", "decay_contacts", "scan_email_security", "check_sender_trust", "scan_links", "security_report", "add_trusted_sender", "add_blocked_sender", "list_trusted_senders", "list_blocked_senders", "extract_action_items", "extract_meeting_details", "scan_inbox_actions", "create_reminder", "create_calendar_event", "list_actions", "complete_action", "action_summary", "create_workflow", "list_workflows", "get_workflow", "delete_workflow", "toggle_workflow", "run_workflow", "workflow_templates", "create_from_template", "workflow_history", "smart_compose", "rewrite_email", "adjust_tone", "suggest_subject_lines", "proofread_email", "compose_reply_draft", "delegate_email", "list_delegations", "update_delegation", "complete_delegation", "cancel_delegation", "delegation_dashboard", "nudge_delegation", "contextual_search", "build_search_index", "conversation_recall", "search_by_date_range", "find_related_emails", "analyze_sentiment", "batch_sentiment", "sender_sentiment", "sentiment_alerts", "sentiment_report", "create_smart_folder", "list_smart_folders", "get_smart_folder", "update_smart_folder", "delete_smart_folder", "pin_smart_folder", "summarize_thread", "thread_decisions", "thread_participants", "thread_timeline", "prepare_forward_summary", "add_label", "remove_label", "list_labels", "get_labeled_emails", "bulk_label", "detect_newsletters", "newsletter_digest", "newsletter_stats", "newsletter_preferences", "apply_newsletter_preferences", "create_auto_response", "list_auto_responses", "update_auto_response", "delete_auto_response", "toggle_auto_response", "auto_response_history", "create_signature", "list_signatures", "update_signature", "delete_signature", "set_default_signature", "get_signature", "add_alias", "list_aliases", "update_alias", "delete_alias", "set_default_alias", "export_emails", "export_thread", "backup_mailbox", "list_backups", "search_exports", "export_stats", "create_template", "list_templates", "get_template", "update_template", "delete_template", "use_template", "save_draft", "list_drafts_managed", "get_draft", "update_draft", "delete_draft", "create_mail_folder", "list_mail_folders", "rename_mail_folder", "delete_mail_folder", "move_to_folder", "get_folder_stats", "track_email", "list_tracked_emails", "get_tracking_status", "tracking_report", "untrack_email", "batch_archive", "batch_reply", "email_to_event", "list_email_events", "upcoming_from_email", "meeting_conflicts", "sync_email_calendar", "email_dashboard", "weekly_report", "monthly_report", "productivity_score", "email_trends"]},
+                "count": {"type": "integer", "description": "Emails to read (inbox/drafts action)", "default": 5},
+                "index": {"type": "integer", "description": "Email index, 1=newest (read/reply/forward/delete/archive/move/flag/quick_reply/suggest_replies)"},
                 "keyword": {"type": "string", "description": "Search keyword (search action)"},
-                "to": {"type": "string", "description": "Recipient (send action)"},
-                "subject": {"type": "string", "description": "Subject (send/verify_sent action)"},
-                "body": {"type": "string", "description": "Body (send action)"},
-                "attachment_path": {"type": "string", "description": "Absolute path to file to attach (send action, optional)"}
+                "sender": {"type": "string", "description": "Filter by sender (search/batch_delete action)"},
+                "subject_filter": {"type": "string", "description": "Filter by subject (search/thread action)"},
+                "unread_only": {"type": "boolean", "description": "Only unread (search action)"},
+                "mailbox": {"type": "string", "description": "Mailbox name (default: inbox)"},
+                "to": {"type": "string", "description": "Recipient (send/forward/verify_sent/schedule/batch_forward/followup)"},
+                "subject": {"type": "string", "description": "Subject (send/verify_sent/schedule/followup)"},
+                "body": {"type": "string", "description": "Body (send/reply/forward/schedule)"},
+                "cc": {"type": "string", "description": "CC recipient(s) (send)"},
+                "bcc": {"type": "string", "description": "BCC recipient(s) (send)"},
+                "html": {"type": "boolean", "description": "Send as HTML (send/schedule action)"},
+                "attachment_path": {"type": "string", "description": "File path to attach (send)"},
+                "from_address": {"type": "string", "description": "Sender address (default: tarsitgroup@outlook.com)"},
+                "reply_all": {"type": "boolean", "description": "Reply to all (reply action)"},
+                "to_mailbox": {"type": "string", "description": "Destination mailbox (move/batch_move action)"},
+                "from_mailbox": {"type": "string", "description": "Source mailbox (batch_move action)"},
+                "flagged": {"type": "boolean", "description": "True=flag, false=unflag (flag action)"},
+                "account": {"type": "string", "description": "Account name (move action)"},
+                "reply_type": {"type": "string", "description": "Quick reply template (quick_reply: acknowledge/confirm_meeting/decline_meeting/will_review/follow_up/thank_you/out_of_office/request_info)"},
+                "custom_note": {"type": "string", "description": "Custom text appended to quick reply"},
+                "name": {"type": "string", "description": "Template/rule/contact name (save_template/send_template/add_rule/lookup_contact/add_contact)"},
+                "variables": {"type": "object", "description": "Template variable substitutions (send_template)"},
+                "send_at": {"type": "string", "description": "When to send (schedule: ISO timestamp or minutes like '30m')"},
+                "schedule_id": {"type": "string", "description": "Scheduled email ID (cancel_scheduled)"},
+                "indices": {"type": "array", "items": {"type": "integer"}, "description": "List of message indices (batch_read/batch_delete/batch_move/batch_forward)"},
+                "all_unread": {"type": "boolean", "description": "Mark ALL unread as read (batch_read)"},
+                "conditions": {"type": "object", "description": "Rule match conditions (add_rule: sender_contains, subject_contains, etc.)"},
+                "actions": {"type": "array", "description": "Rule actions (add_rule: [{action:'move_to',value:'folder'}, ...])", "items": {"type": "object"}},
+                "rule_id": {"type": "string", "description": "Rule ID (delete_rule/toggle_rule)"},
+                "deadline_hours": {"type": "integer", "description": "Follow-up deadline in hours (followup)", "default": 48},
+                "reminder_text": {"type": "string", "description": "Follow-up reminder text (followup)"},
+                "email": {"type": "string", "description": "Contact email (add_contact/delete_contact)"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Contact tags (add_contact)"},
+                "notes": {"type": "string", "description": "Contact notes (add_contact)"},
+                "contact_id": {"type": "string", "description": "Contact ID (delete_contact)"},
+                "tag": {"type": "string", "description": "Filter by tag (list_contacts)"},
+                "query": {"type": "string", "description": "Search query (search_contacts)"},
+                "snooze_until": {"type": "string", "description": "When to resurface (snooze: '2h', '30m', '1d', 'tomorrow', 'monday', 'tonight', or ISO timestamp)"},
+                "snooze_id": {"type": "string", "description": "Snooze ID (cancel_snooze)"},
+                "start_date": {"type": "string", "description": "OOO start date (set_ooo: ISO date 'YYYY-MM-DD', 'today', or 'tomorrow')"},
+                "end_date": {"type": "string", "description": "OOO end date (set_ooo: ISO date 'YYYY-MM-DD')"},
+                "ooo_message": {"type": "string", "description": "OOO auto-reply message body (set_ooo)"},
+                "exceptions": {"type": "array", "items": {"type": "string"}, "description": "Email addresses/domains to NOT auto-reply to (set_ooo)"},
+                "period": {"type": "string", "description": "Analytics time period (analytics: day/week/month)", "default": "week"},
+                "older_than_days": {"type": "integer", "description": "Archive/delete emails older than N days (clean_sweep)", "default": 7},
+                "dry_run": {"type": "boolean", "description": "Preview only, don't actually move (clean_sweep)", "default": True},
+                "categories": {"type": "array", "items": {"type": "string"}, "description": "Categories to sweep (clean_sweep: newsletter/notification/promotional)"},
+                "threshold": {"type": "integer", "description": "VIP detection score threshold 0-100 (detect_vips)", "default": 70},
+                "top_n": {"type": "integer", "description": "Top N contacts to show (communication_graph)", "default": 15},
+                "inactive_days": {"type": "integer", "description": "Days of inactivity before decay (decay_contacts)", "default": 90},
+                "contact_query": {"type": "string", "description": "Contact name or email to report on (relationship_report)"},
+                "filename": {"type": "string", "description": "Filename to search for (search_attachments)"},
+                "file_type": {"type": "string", "description": "File type filter e.g. pdf, xlsx, jpg (search_attachments/list_saved_attachments)"},
+                "folder": {"type": "string", "description": "Subfolder to list (list_saved_attachments)"},
+                "sender_email": {"type": "string", "description": "Sender email to check trust (check_sender_trust)"},
+                "email_or_domain": {"type": "string", "description": "Email or @domain to trust/block (add_trusted_sender/add_blocked_sender)"},
+                "reason": {"type": "string", "description": "Reason for trusting/blocking (add_trusted_sender/add_blocked_sender)"},
+                "action_id": {"type": "string", "description": "Action item ID (complete_action)"},
+                "status": {"type": "string", "description": "Filter status: all/pending/completed (list_actions)"},
+                "title": {"type": "string", "description": "Reminder/event title (create_reminder/create_calendar_event)"},
+                "due_date": {"type": "string", "description": "Reminder due date (create_reminder)"},
+                "source_email_subject": {"type": "string", "description": "Source email subject for reminder context (create_reminder)"},
+                "start_datetime": {"type": "string", "description": "Event start date/time (create_calendar_event)"},
+                "end_datetime": {"type": "string", "description": "Event end date/time (create_calendar_event)"},
+                "location": {"type": "string", "description": "Event location (create_calendar_event)"},
+                "workflow_name": {"type": "string", "description": "Workflow name (create_workflow)"},
+                "workflow_id": {"type": "string", "description": "Workflow ID (get_workflow/delete_workflow/toggle_workflow/run_workflow/workflow_history)"},
+                "trigger": {"type": "object", "description": "Workflow trigger conditions: from_contains, subject_contains, from_vip, category, is_unread (create_workflow)"},
+                "steps": {"type": "array", "description": "Workflow steps: [{action, params, condition}] (create_workflow)", "items": {"type": "object"}},
+                "enabled": {"type": "boolean", "description": "Enable/disable workflow (toggle_workflow/create_workflow)"},
+                "template_name": {"type": "string", "description": "Template name: vip_urgent/newsletter_cleanup/team_forward/followup_escalation/auto_categorize_act (create_from_template)"},
+                "template_params": {"type": "object", "description": "Template parameter overrides (create_from_template)"},
+                "limit": {"type": "integer", "description": "Max history entries (workflow_history)", "default": 20},
+                "prompt": {"type": "string", "description": "Compose prompt describing what to write (smart_compose/compose_reply_draft)"},
+                "context_email": {"type": "string", "description": "Previous email text for context (smart_compose/compose_reply_draft)"},
+                "tone": {"type": "string", "description": "Writing tone: formal/friendly/urgent/apologetic/enthusiastic/concise/diplomatic (smart_compose/rewrite_email/adjust_tone)"},
+                "style": {"type": "string", "description": "Writing style: concise/detailed/bullet_points/executive_summary/action_oriented (smart_compose/rewrite_email)"},
+                "text": {"type": "string", "description": "Email text to rewrite/adjust/proofread (rewrite_email/adjust_tone/proofread_email/suggest_subject_lines)"},
+                "recipient": {"type": "string", "description": "Recipient name/email for context (smart_compose)"},
+                "instructions": {"type": "string", "description": "Reply instructions (compose_reply_draft) or delegation instructions (delegate_email)"},
+                "delegate_to": {"type": "string", "description": "Person to delegate to (delegate_email)"},
+                "delegation_id": {"type": "string", "description": "Delegation ID (update_delegation/complete_delegation/cancel_delegation/nudge_delegation)"},
+                "outcome": {"type": "string", "description": "Completion outcome (complete_delegation)"},
+                "summarize": {"type": "boolean", "description": "Include AI summary in conversation recall (conversation_recall)", "default": False},
+                "max_results": {"type": "integer", "description": "Max search results (contextual_search/search_by_date_range/find_related_emails)", "default": 20},
+                "sender_email": {"type": "string", "description": "Sender email address (sender_sentiment)"},
+                "threshold": {"type": "integer", "description": "Sentiment threshold score (sentiment_alerts, default -20)", "default": -20},
+                "folder_name": {"type": "string", "description": "Smart folder name (create_smart_folder/update_smart_folder)"},
+                "folder_id": {"type": "string", "description": "Smart folder ID (get_smart_folder/update_smart_folder/delete_smart_folder/pin_smart_folder)"},
+                "criteria": {"type": "object", "description": "Search criteria for smart folders: {from_contains, subject_contains, keyword, has_attachment, is_unread, is_flagged, exclude_from}"},
+                "subject_or_index": {"type": "string", "description": "Thread subject string or email index (summarize_thread/thread_decisions/thread_participants/thread_timeline/prepare_forward_summary)"},
+                "max_messages": {"type": "integer", "description": "Max messages in thread (summarize_thread/thread_decisions/thread_participants/thread_timeline)", "default": 20},
+                "label": {"type": "string", "description": "Label/tag name (add_label/remove_label/get_labeled_emails/bulk_label)"},
+                "indices": {"type": "array", "items": {"type": "integer"}, "description": "List of email indices (bulk_label)"},
+                "pref_action": {"type": "string", "description": "Newsletter preference: keep/archive/unsubscribe (newsletter_preferences)"},
+                "conditions": {"type": "object", "description": "Auto-response conditions: {from_contains, subject_contains, body_contains, mailbox} (create_auto_response/update_auto_response)"},
+                "response_body": {"type": "string", "description": "Auto-response reply text (create_auto_response/update_auto_response)"},
+                "response_subject": {"type": "string", "description": "Custom subject for auto-response (create_auto_response)"},
+                "max_replies": {"type": "integer", "description": "Max auto-replies per sender per day (create_auto_response)", "default": 1},
+                "rule_id": {"type": "string", "description": "Auto-response rule ID (update_auto_response/delete_auto_response/toggle_auto_response)"},
+                "limit": {"type": "integer", "description": "Max history entries (auto_response_history)", "default": 20},
+                "sig_id": {"type": "string", "description": "Signature ID (update_signature/delete_signature/set_default_signature/get_signature)"},
+                "is_html": {"type": "boolean", "description": "Whether signature body is HTML (create_signature/update_signature)"},
+                "alias_email": {"type": "string", "description": "Alias email address (add_alias/update_alias)"},
+                "display_name": {"type": "string", "description": "Display name for alias (add_alias/update_alias)"},
+                "alias_id": {"type": "string", "description": "Alias ID (update_alias/delete_alias/set_default_alias)"},
+                "export_format": {"type": "string", "description": "Export format: json or txt (export_emails/export_thread)", "enum": ["json", "txt"]},
+                "max_emails": {"type": "integer", "description": "Max emails for backup (backup_mailbox)", "default": 100},
+                "template_id": {"type": "string", "description": "Template ID (get_template/update_template/delete_template/use_template)"},
+                "subject_template": {"type": "string", "description": "Template subject with {{variable}} placeholders (create_template/update_template)"},
+                "body_template": {"type": "string", "description": "Template body with {{variable}} placeholders (create_template/update_template)"},
+                "category": {"type": "string", "description": "Template category (create_template/list_templates/update_template)"},
+                "draft_id": {"type": "string", "description": "Draft ID (get_draft/update_draft/delete_draft)"},
+                "parent": {"type": "string", "description": "Parent folder (create_mail_folder)"},
+                "new_name": {"type": "string", "description": "New folder name (rename_mail_folder)"},
+                "tracking_id": {"type": "string", "description": "Tracking ID (get_tracking_status/untrack_email)"},
+                "sent_at": {"type": "string", "description": "When email was sent ISO (track_email)"},
+                "calendar_name": {"type": "string", "description": "Calendar name (email_to_event)"},
+                "date": {"type": "string", "description": "Date YYYY-MM-DD (meeting_conflicts)"},
+                "days": {"type": "integer", "description": "Number of days (upcoming_from_email/email_trends)", "default": 7}
             },
             "required": ["action"]
         }
@@ -466,14 +667,15 @@ TARS_TOOLS = [
     # ═══════════════════════════════════════
     {
         "name": "generate_report",
-        "description": "Generate professional reports (Excel, PDF, or CSV). Reports are saved to ~/Documents/TARS_Reports/ and can be attached to emails.\n\nFormats:\n- 'excel' → .xlsx with styled headers, alternating rows, auto-width, optional summary\n- 'pdf' → .pdf with title, sections, optional table\n- 'csv' → simple .csv data export\n\nWorkflow: generate_report → get the path → mac_mail send with attachment_path\n\nExamples:\n  generate_report('excel', 'Sales Report', headers=['Product','Revenue'], rows=[['Widget','$1000'],['Gadget','$2500']])\n  generate_report('pdf', 'Project Summary', sections=[{'heading':'Overview','body':'Project completed on time.'}])\n  generate_report('excel', 'Analysis', headers=['Metric','Value'], rows=[...], summary={'Total':'$5000','Average':'$2500'})",
+        "description": "Generate professional reports (Excel, PDF, or CSV). Reports are saved to ~/Documents/TARS_Reports/ and can be attached to emails.\n\nFormats:\n- 'excel' → .xlsx with styled headers, alternating rows, auto-width, optional summary\n- 'pdf' → .pdf with title, sections, optional table\n- 'csv' → simple .csv data export\n\nTwo ways to pass data:\n1. TABULAR (preferred for excel/csv): headers=['Stock','Price','P/E'], rows=[['NVDA','$182.81','45.25'],['AMD','$206.82','79.43']]\n2. DATA DICT (auto-converted): data={'stock_data': {'NVDA': {'price': '$182.81', 'P/E': '45.25'}, 'AMD': {'price': '$206.82', 'P/E': '79.43'}}, 'news': ['headline1', 'headline2']}\n   → Dict-of-dicts become table rows, lists become summary/sections.\n\nWorkflow: generate_report → get the path → mac_mail send with attachment_path",
         "input_schema": {
             "type": "object",
             "properties": {
                 "format": {"type": "string", "enum": ["excel", "pdf", "csv"], "description": "Report format"},
                 "title": {"type": "string", "description": "Report title"},
-                "headers": {"type": "array", "items": {"type": "string"}, "description": "Column headers (excel/csv/pdf table)"},
-                "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}, "description": "Data rows — each row is a list of strings"},
+                "data": {"type": "object", "description": "Nested data dict — auto-converted to tabular format. Use this when passing research results directly."},
+                "headers": {"type": "array", "items": {"type": "string"}, "description": "Column headers (excel/csv/pdf table). Not needed if 'data' is provided."},
+                "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}, "description": "Data rows — each row is a list of strings. Not needed if 'data' is provided."},
                 "sections": {"type": "array", "items": {"type": "object"}, "description": "PDF sections: [{heading: str, body: str}, ...]"},
                 "summary": {"type": "object", "description": "Key-value summary pairs shown below table (excel only)"},
                 "filename": {"type": "string", "description": "Custom filename (auto-generated if omitted)"}
@@ -515,6 +717,226 @@ TARS_TOOLS = [
             "required": ["description", "reason"],
         },
     },
+    {
+        "name": "get_error_report",
+        "description": (
+            "Get the full error tracker report, formatted as an actionable dev-agent prompt. "
+            "Returns every tracked error with stack traces, fix hints, sample inputs, "
+            "and which files to edit. Use this to understand what's failing in TARS, "
+            "or pass the output directly to deploy_dev_agent to fix the issues.\n\n"
+            "The report includes:\n"
+            "- All unfixed errors ranked by frequency\n"
+            "- Stack traces and exact code locations\n"
+            "- Pattern-matched fix hints (what to change)\n"
+            "- Sample inputs that triggered each error\n"
+            "- Previous fix attempts (what didn't work)\n"
+            "- Error hotspot files\n\n"
+            "Use format='dev_prompt' for a dev-agent-ready prompt, or 'summary' for a quick overview."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "enum": ["dev_prompt", "summary"],
+                    "description": "'dev_prompt' = full prompt for dev agent with all context. 'summary' = quick human overview.",
+                },
+            },
+            "required": [],
+        },
+    },
+
+    # ═══════════════════════════════════════
+    #  Scheduled Tasks (Proactive Agent)
+    # ═══════════════════════════════════════
+    {
+        "name": "schedule_task",
+        "description": "Schedule a recurring autonomous task. TARS will execute it automatically at the specified time.\n\nSchedule formats:\n- Cron: '0 9 * * *' (every day at 9 AM)\n- Natural: 'daily at 9am', 'every 30 minutes', 'every monday at 8am', 'weekdays at 9am'\n\nExamples:\n  schedule_task(task='Check my email and summarize unread', schedule='daily at 9am')\n  schedule_task(task='Track NVDA stock price', schedule='every hour')\n  schedule_task(task='Summarize tech news', schedule='daily at 7pm')\n  schedule_task(task='Backup my projects folder', schedule='every sunday at 2am')",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "What TARS should do when triggered."},
+                "schedule": {"type": "string", "description": "When to run: cron ('0 9 * * *') or natural language ('daily at 9am', 'every hour', 'every monday at 8am')."}
+            },
+            "required": ["task", "schedule"]
+        }
+    },
+    {
+        "name": "list_scheduled_tasks",
+        "description": "List all scheduled recurring tasks with their status, last run time, and next run time.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "remove_scheduled_task",
+        "description": "Remove a scheduled task by its ID. Use list_scheduled_tasks first to see task IDs.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The ID of the scheduled task to remove."}
+            },
+            "required": ["task_id"]
+        }
+    },
+
+    # ═══════════════════════════════════════
+    #  Image Generation (DALL-E 3)
+    # ═══════════════════════════════════════
+    {
+        "name": "generate_image",
+        "description": "Generate an image using DALL-E 3. The image is saved to ~/Documents/TARS_Reports/ and can be attached to emails.\n\nExamples:\n  generate_image(prompt='A cyberpunk cityscape at sunset with neon signs')\n  generate_image(prompt='Logo for a tech startup called NexaAI', size='1024x1024', quality='hd')\n  generate_image(prompt='Professional headshot style portrait, corporate background')",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "Detailed description of the image to generate."},
+                "size": {"type": "string", "enum": ["1024x1024", "1792x1024", "1024x1792"], "description": "Image size (default: 1024x1024).", "default": "1024x1024"},
+                "quality": {"type": "string", "enum": ["standard", "hd"], "description": "Image quality (default: standard).", "default": "standard"},
+                "style": {"type": "string", "enum": ["vivid", "natural"], "description": "Image style (default: vivid).", "default": "vivid"}
+            },
+            "required": ["prompt"]
+        }
+    },
+
+    # ═══════════════════════════════════════
+    #  Home Automation (Home Assistant)
+    # ═══════════════════════════════════════
+    {
+        "name": "smart_home",
+        "description": "Control smart home devices via Home Assistant.\n\nActions:\n- 'list' — list all devices and their states\n- 'turn_on' / 'turn_off' — control a device by entity_id\n- 'set' — set brightness, temperature, color, etc.\n- 'scene' — activate a Home Assistant scene\n- 'status' — get status of a specific device\n\nExamples:\n  smart_home(action='list')\n  smart_home(action='turn_on', entity_id='light.living_room')\n  smart_home(action='set', entity_id='light.bedroom', data={'brightness': 128})\n  smart_home(action='turn_off', entity_id='switch.coffee_maker')\n  smart_home(action='scene', entity_id='scene.movie_night')",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["list", "turn_on", "turn_off", "set", "scene", "status"], "description": "What to do."},
+                "entity_id": {"type": "string", "description": "Home Assistant entity ID (e.g., 'light.living_room', 'switch.fan')."},
+                "data": {"type": "object", "description": "Additional data for 'set' action (brightness, temperature, color, etc.)."}
+            },
+            "required": ["action"]
+        }
+    },
+
+    # ═══════════════════════════════════════
+    #  PowerPoint Generation
+    # ═══════════════════════════════════════
+    {
+        "name": "generate_presentation",
+        "description": "Generate a PowerPoint (.pptx) presentation. Saved to ~/Documents/TARS_Reports/.\n\nExamples:\n  generate_presentation(title='Q4 Results', slides=[{title:'Revenue', bullets:['$2.1B revenue','15% YoY growth']}, {title:'Outlook', bullets:['Expanding to APAC','New product launch Q1']}])\n  generate_presentation(title='AI Chip Market', slides=[{title:'Overview', body:'The AI chip market is projected...'}, {title:'Key Players', bullets:['NVIDIA','AMD','Intel']}])",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Presentation title (first slide)."},
+                "slides": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "Slide title"},
+                            "bullets": {"type": "array", "items": {"type": "string"}, "description": "Bullet points for this slide"},
+                            "body": {"type": "string", "description": "Body text (alternative to bullets)"},
+                            "image_path": {"type": "string", "description": "Optional image path to include on slide"}
+                        },
+                        "required": ["title"]
+                    },
+                    "description": "List of slides (each has title + bullets or body)."
+                },
+                "subtitle": {"type": "string", "description": "Subtitle on title slide."},
+                "filename": {"type": "string", "description": "Custom filename (auto-generated if omitted)."}
+            },
+            "required": ["title", "slides"]
+        }
+    },
+
+    # ═══════════════════════════════════════
+    #  Video/Audio Processing
+    # ═══════════════════════════════════════
+    {
+        "name": "process_media",
+        "description": "Process video/audio files using FFmpeg and Whisper.\n\nActions:\n- 'transcribe' — Transcribe audio/video to text (uses Whisper)\n- 'convert' — Convert between formats (mp4→mp3, wav→mp3, etc.)\n- 'trim' — Trim a clip (start/end times)\n- 'extract_audio' — Extract audio track from video\n- 'compress' — Compress video (reduce file size)\n- 'info' — Get media file info (duration, codec, resolution)\n\nExamples:\n  process_media(action='transcribe', input_path='~/meeting.mp4')\n  process_media(action='convert', input_path='~/audio.wav', output_format='mp3')\n  process_media(action='trim', input_path='~/video.mp4', start='00:01:30', end='00:05:00')\n  process_media(action='extract_audio', input_path='~/lecture.mp4')",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["transcribe", "convert", "trim", "extract_audio", "compress", "info"], "description": "What to do."},
+                "input_path": {"type": "string", "description": "Path to the input media file."},
+                "output_format": {"type": "string", "description": "Output format for 'convert' (mp3, mp4, wav, etc.)."},
+                "start": {"type": "string", "description": "Start time for 'trim' (HH:MM:SS or seconds)."},
+                "end": {"type": "string", "description": "End time for 'trim' (HH:MM:SS or seconds)."},
+                "output_path": {"type": "string", "description": "Custom output path (auto-generated if omitted)."}
+            },
+            "required": ["action", "input_path"]
+        }
+    },
+
+    # ═══════════════════════════════════════
+    #  Document Ingestion (RAG)
+    # ═══════════════════════════════════════
+    {
+        "name": "ingest_document",
+        "description": "Ingest a document into TARS's semantic memory for RAG (Retrieval-Augmented Generation). Once ingested, you can search the document's contents using search_documents or recall_memory.\n\nSupported formats: PDF, DOCX, TXT, MD, PY, JSON, CSV, HTML, YAML, JS, TS\n\nExamples:\n  ingest_document(file_path='~/Documents/research_paper.pdf')\n  ingest_document(file_path='~/notes.md')\n  ingest_document(file_path='~/code/README.md')\n\nAfter ingesting, use: search_documents(query='what does the paper say about X?')",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Path to the document to ingest."},
+                "chunk_size": {"type": "integer", "description": "Characters per chunk (default: 1000).", "default": 1000},
+                "chunk_overlap": {"type": "integer", "description": "Overlap between chunks (default: 200).", "default": 200}
+            },
+            "required": ["file_path"]
+        }
+    },
+    {
+        "name": "search_documents",
+        "description": "Search previously ingested documents using semantic (meaning-based) search. Returns the most relevant chunks from all ingested PDFs, docs, and files.\n\nExamples:\n  search_documents(query='machine learning performance benchmarks')\n  search_documents(query='what are the key findings?', n_results=10)\n\nFirst ingest documents with ingest_document, then search them with this tool.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Natural language search query."},
+                "n_results": {"type": "integer", "description": "Max results to return (default: 5).", "default": 5}
+            },
+            "required": ["query"]
+        }
+    },
+
+    # ═══════════════════════════════════════
+    #  Headless Browser (Playwright)
+    # ═══════════════════════════════════════
+    {
+        "name": "headless_browse",
+        "description": "Fast headless browser for web scraping and screenshots without opening Chrome. Uses Playwright.\n\nActions:\n- 'scrape' — Extract text content from a URL (faster than browser agent)\n- 'screenshot' — Take a full-page screenshot\n- 'links' — Extract all links from a page\n- 'tables' — Extract HTML tables as structured data\n\nExamples:\n  headless_browse(action='scrape', url='https://example.com')\n  headless_browse(action='screenshot', url='https://news.ycombinator.com')\n  headless_browse(action='links', url='https://github.com/trending')\n  headless_browse(action='tables', url='https://en.wikipedia.org/wiki/List_of_countries')\n\n⚠️ For interactive browsing (clicking, forms, login), use deploy_browser_agent instead.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["scrape", "screenshot", "links", "tables"], "description": "What to do."},
+                "url": {"type": "string", "description": "URL to browse."}
+            },
+            "required": ["action", "url"]
+        }
+    },
+
+    # ═══════════════════════════════════════
+    #  MCP (Model Context Protocol) Client
+    # ═══════════════════════════════════════
+    {
+        "name": "mcp_list_tools",
+        "description": "List all available tools from connected MCP servers. MCP (Model Context Protocol) allows TARS to connect to external tool servers for additional capabilities.\n\nUse this to discover what MCP tools are available before calling them.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "mcp_call_tool",
+        "description": "Call a tool on a connected MCP server. Use mcp_list_tools first to discover available tools.\n\nTool names are formatted as: mcp_<server_name>__<tool_name>\n\nExamples:\n  mcp_call_tool(tool='mcp_filesystem__read_file', arguments={'path': '/tmp/data.txt'})\n  mcp_call_tool(tool='mcp_github__search_repos', arguments={'query': 'language:python stars:>1000'})\n  mcp_call_tool(tool='mcp_sqlite__query', arguments={'sql': 'SELECT * FROM users LIMIT 10'})",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tool": {"type": "string", "description": "Full MCP tool name: mcp_<server>__<tool_name>."},
+                "arguments": {"type": "object", "description": "Arguments to pass to the MCP tool."}
+            },
+            "required": ["tool"]
+        }
+    },
 ]
 
 
@@ -524,23 +946,35 @@ TARS_TOOLS = [
 
 # Core tools always included regardless of intent
 _CORE_TOOLS = {
-    "think", "send_imessage", "wait_for_reply", "recall_memory",
-    "save_memory", "scan_environment", "checkpoint", "propose_self_heal",
+    "think", "send_imessage", "send_imessage_file", "wait_for_reply", "recall_memory",
+    "save_memory", "list_memories", "delete_memory", "scan_environment", "checkpoint",
+    "propose_self_heal",
 }
 
 # Domain-specific tool groups
 _DOMAIN_TOOLS = {
-    "coding": {"run_command", "run_quick_command", "write_file", "quick_read_file",
-               "code_task", "file_task", "verify_result"},
-    "web": {"web_search", "web_task", "browse_url", "browse_page"},
-    "files": {"write_file", "quick_read_file", "file_task", "verify_result",
-              "run_quick_command"},
-    "system": {"run_command", "run_quick_command", "system_task",
-               "scan_environment", "mac_control"},
-    "communication": {"send_imessage", "wait_for_reply", "send_email"},
-    "research": {"web_search", "web_task", "browse_url", "browse_page",
-                 "research_task", "quick_read_file"},
-    "report": {"generate_report", "write_file", "quick_read_file"},
+    "coding": {"run_quick_command", "quick_read_file",
+               "deploy_coder_agent", "deploy_file_agent", "deploy_dev_agent", "verify_result"},
+    "web": {"web_search", "deploy_browser_agent", "deploy_screen_agent", "headless_browse",
+            "manage_account"},
+    "files": {"quick_read_file", "deploy_file_agent", "verify_result",
+              "run_quick_command", "ingest_document", "search_documents"},
+    "system": {"run_quick_command", "deploy_system_agent",
+               "scan_environment", "mac_system", "mac_calendar", "mac_notes",
+               "mac_reminders", "smart_home"},
+    "communication": {"send_imessage", "send_imessage_file", "wait_for_reply", "mac_mail",
+                       "deploy_email_agent"},
+    "research": {"web_search", "deploy_browser_agent", "deploy_research_agent",
+                 "headless_browse", "quick_read_file",
+                 "search_documents", "ingest_document"},
+    "report": {"generate_report", "quick_read_file", "generate_presentation",
+               "generate_image"},
+    "scheduling": {"schedule_task", "list_scheduled_tasks", "remove_scheduled_task"},
+    "media": {"process_media"},
+    "home": {"smart_home"},
+    "creative": {"generate_image", "generate_presentation", "generate_report"},
+    "documents": {"ingest_document", "search_documents", "quick_read_file"},
+    "memory": {"save_memory", "recall_memory", "list_memories", "delete_memory", "ingest_document", "search_documents"},
 }
 
 # Build a name→tool lookup once

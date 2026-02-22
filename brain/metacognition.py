@@ -42,6 +42,13 @@ class MetaCognitiveState:
     avg_confidence: float = 75.0
     token_efficiency: float = 1.0     # progress per token (higher = better)
     recommendation: str = ""
+    # Phase 38: Preventive intelligence fields
+    deployments_used: int = 0
+    deployments_budget: int = 15
+    phase: str = "planning"
+    tool_diversity: float = 1.0       # 0-1 tool variety score
+    progress_score: float = 1.0       # 0-1 success rate
+    strategic_advice: str = ""
 
 
 class MetaCognitionMonitor:
@@ -84,6 +91,16 @@ class MetaCognitionMonitor:
         self._total_steps = 0
         self._start_time = time.time()
         self._last_state = MetaCognitiveState()
+        # Phase 38: Preventive intelligence
+        self._deployments = []               # Track agent deployments
+        self._max_deployments = 15           # Budget (set by planner via set_budget)
+        self._max_tool_loops = 50            # Budget (set by planner via set_budget)
+        self._tool_name_counter = Counter()  # Cumulative tool usage counts
+        self._phase = "planning"             # Current phase
+        self._phase_steps = Counter()        # Steps spent in each phase
+        self._unique_tools_used = set()      # Distinct tools used this task
+        self._successful_results = 0         # Count of successful tool calls
+        self._total_token_estimate = 0       # Running token estimate
 
     def reset(self):
         """Reset for a new task."""
@@ -96,6 +113,14 @@ class MetaCognitionMonitor:
         self._total_steps = 0
         self._start_time = time.time()
         self._last_state = MetaCognitiveState()
+        # Phase 38: Reset preventive intelligence
+        self._deployments.clear()
+        self._tool_name_counter.clear()
+        self._phase = "planning"
+        self._phase_steps.clear()
+        self._unique_tools_used.clear()
+        self._successful_results = 0
+        self._total_token_estimate = 0
 
     def record_tool_call(self, tool_name: str, tool_input: dict,
                          success: bool, duration: float = 0.0):
@@ -134,9 +159,50 @@ class MetaCognitionMonitor:
         else:
             self._steps_since_report += 1
 
+        # Phase 38: Track diversity, success, and phase
+        self._unique_tools_used.add(tool_name)
+        self._tool_name_counter[tool_name] += 1
+        if success:
+            self._successful_results += 1
+        self._phase_steps[self._phase] += 1
+
+        # Auto-detect phase transitions from tool usage
+        if tool_name in ("generate_report", "generate_presentation"):
+            self._update_phase("compilation")
+        elif tool_name in ("send_imessage", "send_imessage_file", "mac_mail"):
+            self._update_phase("delivery")
+        elif tool_name.startswith("deploy_"):
+            agent = tool_name.replace("deploy_", "")
+            if agent in ("research_agent",):
+                self._update_phase("research")
+            else:
+                self._update_phase("action")
+
     def record_confidence(self, score: float):
         """Record a confidence score from the brain's thinking."""
         self._confidence_history.append((time.time(), score))
+
+    def set_budget(self, max_deployments: int = 15, max_tool_loops: int = 50):
+        """Set task budget limits for awareness tracking."""
+        self._max_deployments = max_deployments
+        self._max_tool_loops = max_tool_loops
+
+    def record_deployment(self, agent_type: str, task: str = ""):
+        """Record an agent deployment for budget tracking."""
+        self._deployments.append({
+            "agent": agent_type,
+            "task": task[:200],
+            "timestamp": time.time(),
+        })
+
+    def _update_phase(self, new_phase: str):
+        """Track phase transitions for awareness."""
+        if self._phase != new_phase:
+            self._phase = new_phase
+
+    def record_token_estimate(self, tokens: int):
+        """Track estimated token usage for budget awareness."""
+        self._total_token_estimate += tokens
 
     def analyze(self) -> MetaCognitiveState:
         """
@@ -197,6 +263,44 @@ class MetaCognitionMonitor:
                 f"updating Abdullah. Send a progress update via send_imessage."
             )
 
+        # ── Check 6: Deployment budget crisis ──
+        elif (len(self._deployments) >= self._max_deployments - 1
+              and self._phase in ("planning", "research")):
+            state.recommendation = (
+                f"🚨 META-COGNITION: You've used {len(self._deployments)}/{self._max_deployments} "
+                f"deployments and you're still in the {self._phase} phase. STOP deploying agents. "
+                f"Use what you have — move to compilation and delivery NOW. "
+                f"Use generate_report and send_imessage with the data you've collected."
+            )
+
+        # ── Check 7: Phase imbalance (stuck in research too long) ──
+        elif (self._phase == "research"
+              and self._phase_steps.get("research", 0) > 15
+              and self._phase_steps.get("compilation", 0) == 0):
+            state.recommendation = (
+                f"⚠️ META-COGNITION: {self._phase_steps['research']} steps in research "
+                f"with zero compilation/delivery. You have enough data — MOVE FORWARD. "
+                f"Compile what you have into a report and deliver it."
+            )
+
+        # ── Check 8: Low tool diversity (stuck using one tool) ──
+        elif self._total_steps > 8 and len(self._unique_tools_used) <= 2:
+            top = self._tool_name_counter.most_common(1)
+            top_name = top[0][0] if top else "unknown"
+            state.recommendation = (
+                f"⚠️ META-COGNITION: {self._total_steps} steps using only "
+                f"{len(self._unique_tools_used)} distinct tools (mostly `{top_name}`). "
+                f"Consider a different approach — you may be stuck in a rut."
+            )
+
+        # ── Populate Phase 38 fields ──
+        state.deployments_used = len(self._deployments)
+        state.deployments_budget = self._max_deployments
+        state.phase = self._phase
+        if self._total_steps > 0:
+            state.tool_diversity = min(1.0, len(self._unique_tools_used) / max(1, self._total_steps) * 3)
+            state.progress_score = self._successful_results / max(1, self._total_steps)
+
         # ── Confidence Trend ──
         state.confidence_trend = self._confidence_trend()
         state.avg_confidence = self._avg_confidence()
@@ -221,6 +325,60 @@ class MetaCognitionMonitor:
         """
         state = self.analyze()
         return state.recommendation if state.recommendation else None
+
+    def get_strategic_advice(self) -> Optional[str]:
+        """
+        Proactive strategy guidance — not just problem warnings.
+        
+        Unlike get_injection() which only fires when something is wrong,
+        this provides forward-looking advice. Injected periodically.
+        """
+        advice = []
+        deploys_used = len(self._deployments)
+        deploys_left = self._max_deployments - deploys_used
+        loops_left = self._max_tool_loops - self._total_steps
+
+        # Budget awareness
+        if deploys_used > 0 and deploys_left <= 3:
+            advice.append(
+                f"📊 {deploys_left} deployments left — prefer direct tools over agents."
+            )
+
+        if loops_left <= 10 and self._total_steps > 5:
+            advice.append(
+                f"⏳ {loops_left} steps remaining — wrap up and deliver."
+            )
+
+        # Phase coaching
+        if self._phase == "research" and deploys_used >= (self._max_deployments // 2):
+            advice.append(
+                f"📋 {deploys_used}/{self._max_deployments} deploys used in research. "
+                f"Move to compilation — generate_report with data you have."
+            )
+
+        if (self._phase == "compilation"
+                and self._phase_steps.get("compilation", 0) > 3
+                and self._phase_steps.get("delivery", 0) == 0):
+            advice.append("📬 Report ready — deliver it (send_imessage, mac_mail).")
+
+        # Success rate coaching
+        if self._total_steps > 5:
+            rate = self._successful_results / max(1, self._total_steps)
+            if rate < 0.4:
+                advice.append(
+                    f"⚠️ {rate:.0%} success rate — try simpler approaches."
+                )
+
+        # Same-agent over-deployment
+        if deploys_used >= 2:
+            agent_counts = Counter(d["agent"] for d in self._deployments)
+            top_agent, top_count = agent_counts.most_common(1)[0]
+            if top_count >= 3:
+                advice.append(
+                    f"🔄 {top_count}x {top_agent} — consider a different agent or direct tools."
+                )
+
+        return "\n".join(advice) if advice else None
 
     # ─── Internal Helpers ────────────────────────────
 
@@ -328,4 +486,13 @@ class MetaCognitionMonitor:
             "confidence_trend": self._last_state.confidence_trend,
             "avg_confidence": self._last_state.avg_confidence,
             "elapsed_seconds": time.time() - self._start_time,
+            # Phase 38: Preventive intelligence
+            "deployments_used": len(self._deployments),
+            "deployments_budget": self._max_deployments,
+            "phase": self._phase,
+            "tool_diversity": self._last_state.tool_diversity,
+            "progress_score": self._last_state.progress_score,
+            "unique_tools": len(self._unique_tools_used),
+            "success_rate": self._successful_results / max(1, self._total_steps),
+            "token_estimate": self._total_token_estimate,
         }

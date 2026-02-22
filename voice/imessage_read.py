@@ -101,6 +101,14 @@ class IMessageReader:
         """Check for new messages from the owner's phone number since last check."""
         try:
             with self._get_db_connection() as conn:
+                # Sanity check: if DB was vacuumed/reset, max ROWID may be lower
+                # than our watermark — reset to avoid missing all messages.
+                cursor = conn.execute("SELECT MAX(ROWID) FROM message")
+                db_max = cursor.fetchone()[0] or 0
+                if db_max > 0 and db_max < self._last_message_rowid - 1000:
+                    logger.warning(f"  ⚠️ chat.db ROWID reset detected (db max: {db_max}, watermark: {self._last_message_rowid}). Resetting.")
+                    self._last_message_rowid = max(0, db_max - 10)  # Catch last 10 messages
+
                 # Fetch both `text` AND `attributedBody` — on modern macOS
                 # the text column is empty and content is in the blob.
                 cursor = conn.execute("""
@@ -113,6 +121,7 @@ class IMessageReader:
                       AND m.is_from_me = 0
                       AND m.associated_message_type = 0
                     ORDER BY m.ROWID ASC
+                    LIMIT 50
                 """, (self._last_message_rowid, self.phone))
 
                 messages = []

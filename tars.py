@@ -21,6 +21,7 @@ Usage:
 
 import os
 import sys
+import re
 import yaml
 import time
 import logging
@@ -35,7 +36,7 @@ os.chdir(BASE_DIR)
 sys.path.insert(0, BASE_DIR)
 
 from brain.planner import TARSBrain
-from brain.message_parser import MessageStreamParser, MessageBatch
+from brain.message_parser import MessageStreamParser, MessageBatch, ACKNOWLEDGMENT_PATTERNS
 from brain.self_heal import SelfHealEngine
 from brain.daily_improve import DailyImprover
 from executor import ToolExecutor
@@ -47,8 +48,13 @@ from memory.error_tracker import error_tracker
 from utils.logger import setup_logger
 from utils.event_bus import event_bus
 from utils.agent_monitor import agent_monitor
+from utils.watchdog import HealthWatchdog
 from server import TARSServer
 from hands import mac_control as mac
+from hands.environment import setup_environment, cleanup_environment, clipboard_save, clipboard_restore, focus_save, focus_restore
+from voice.voice_interface import VoiceInterface
+from utils.scheduler import task_scheduler
+from utils.mcp_client import MCPClient
 
 logger = logging.getLogger("TARS")
 
@@ -95,9 +101,23 @@ class TARS:
     def __init__(self):
         print(BANNER)
 
+        # Track init steps for dashboard
+        self._init_steps = []
+        self._init_start = time.time()
+
+        def _init_step(label, detail="", status="ok"):
+            """Record an init step for the dashboard boot sequence."""
+            self._init_steps.append({
+                "label": label,
+                "detail": detail,
+                "status": status,
+                "ts": time.time() - self._init_start,
+            })
+
         # Load config
         self.config = load_config()
         logger.info("  ⚙️  Config loaded")
+        _init_step("Config", "config.yaml loaded")
 
         # Validate API keys — both brain and agent
         provider_urls = {
@@ -113,8 +133,10 @@ class TARS:
         brain_cfg = self.config.get("brain_llm", {})
         brain_key = brain_cfg.get("api_key", "")
         brain_provider = brain_cfg.get("provider", "")
+        brain_model = brain_cfg.get("model", "?")
         if brain_key and not brain_key.startswith("YOUR_"):
-            logger.info(f"  🧠 Brain LLM: {brain_provider}/{brain_cfg.get('model', '?')}")
+            logger.info(f"  🧠 Brain LLM: {brain_provider}/{brain_model}")
+            _init_step("Brain LLM", f"{brain_provider}/{brain_model}")
         elif brain_provider:
             url = provider_urls.get(brain_provider, "your provider's dashboard")
             logger.error(f"\n  ❌ ERROR: Brain API key missing or invalid")
@@ -127,6 +149,7 @@ class TARS:
         llm_cfg = self.config["llm"]
         api_key = llm_cfg["api_key"]
         provider = llm_cfg["provider"]
+        agent_model = llm_cfg.get("model", "?")
         if not api_key or api_key.startswith("YOUR_"):
             url = provider_urls.get(provider, "your provider's dashboard")
             logger.error(f"\n  ❌ ERROR: Set your {provider} API key in config.yaml")
@@ -135,6 +158,7 @@ class TARS:
             logger.error(f"  → Get a key at: {url}\n")
             sys.exit(1)
         logger.info(f"  🤖 Agent LLM: {provider}")
+        _init_step("Agent LLM", f"{provider}/{agent_model}")
 
         # Initialize components
         self.logger = setup_logger(self.config, BASE_DIR)
@@ -142,6 +166,7 @@ class TARS:
 
         self.memory = MemoryManager(self.config, BASE_DIR)
         logger.info("  🧠 Memory loaded")
+        _init_step("Memory", "context + preferences loaded")
 
         self.agent_memory = AgentMemory(BASE_DIR)
         logger.info("  🧬 Agent memory loaded")
@@ -149,6 +174,7 @@ class TARS:
         self.imessage_sender = IMessageSender(self.config)
         self.imessage_reader = IMessageReader(self.config)
         logger.info("  📱 iMessage bridge ready")
+        _init_step("iMessage", "send + read bridge")
 
         # Must init before executor/brain so they can reference these
         self.running = True
@@ -166,10 +192,13 @@ class TARS:
         logger.info(f"     ├─ 💻 Coder Agent")
         logger.info(f"     ├─ ⚙️  System Agent")
         logger.info(f"     ├─ 🔍 Research Agent")
+        logger.info(f"     ├─ 📧 Email Agent")
         logger.info(f"     └─ 📁 File Agent")
+        _init_step("Executor", "6 agents (browser, coder, system, research, email, file)")
 
         self.brain = TARSBrain(self.config, self.executor, self.memory)
         logger.info("  🤖 Orchestrator brain online")
+        _init_step("Brain", "orchestrator online")
 
         # Self-Healing Engine — monitors failures, proposes code fixes
         self.self_heal = SelfHealEngine()
@@ -191,6 +220,7 @@ class TARS:
         tracker_stats = error_tracker.get_stats()
         logger.info(f"  📋 Error tracker: {tracker_stats['unique_errors']} patterns, "
               f"{tracker_stats['auto_fixable']} auto-fixable")
+        _init_step("Error Tracker", f"{tracker_stats['unique_errors']} patterns, {tracker_stats['auto_fixable']} auto-fixable")
 
         # Parallel task processing config
         self._max_parallel_tasks = self.config.get("agent", {}).get("max_parallel_tasks", 3)
@@ -213,6 +243,52 @@ class TARS:
         self.server = TARSServer(memory_manager=self.memory, tars_instance=self)
         self.server.start()
         logger.info("  🖥️  Dashboard live at \033[36mhttp://localhost:8420\033[0m")
+        _init_step("Dashboard", "http://localhost:8420")
+
+        # Voice interface — conversational mode via microphone + speaker
+        self.voice = VoiceInterface(self.config, on_message=self._on_voice_message)
+        if self.voice.enabled:
+            self.executor.set_voice_interface(self.voice)
+            logger.info("  🎤 Voice interface configured")
+            _init_step("Voice", "microphone + speaker active")
+        else:
+            logger.info("  🎤 Voice interface disabled (enable in config.yaml → voice.enabled: true)")
+            _init_step("Voice", "disabled", status="skip")
+
+        # Task scheduler — proactive autonomous actions
+        self.scheduler = task_scheduler
+        self.scheduler._on_task_due = self._on_scheduled_task
+        self.scheduler.start()
+        self.executor.set_scheduler(self.scheduler)
+
+        # MCP client — connect to external tool servers
+        self.mcp_client = MCPClient(self.config)
+        mcp_servers = self.config.get("mcp", {}).get("servers", [])
+        if mcp_servers:
+            self.mcp_client.connect_all()
+            self.executor.set_mcp_client(self.mcp_client)
+            mcp_stats = self.mcp_client.get_stats()
+            logger.info(f"  🔌 MCP: {mcp_stats['connected']}/{mcp_stats['configured']} servers, {mcp_stats['total_tools']} tools")
+            _init_step("MCP", f"{mcp_stats['connected']}/{mcp_stats['configured']} servers, {mcp_stats['total_tools']} tools")
+        else:
+            logger.info("  🔌 MCP client ready (no servers configured — add 'mcp.servers' to config.yaml)")
+            _init_step("MCP", "no servers configured", status="skip")
+
+        # Health watchdog — monitors for stale tasks, high memory, emits heartbeats
+        self.watchdog = HealthWatchdog(self.config, self)
+        logger.info("  🐕 Health watchdog configured")
+
+        # Email inbox monitor — polls Mail.app for new emails, emits events
+        from hands.email import inbox_monitor
+        self.inbox_monitor = inbox_monitor
+        monitor_enabled = self.config.get("email", {}).get("inbox_monitor", True)
+        if monitor_enabled:
+            poll_interval = self.config.get("email", {}).get("poll_interval", 30)
+            self.inbox_monitor.poll_interval = poll_interval
+            self.inbox_monitor.start()
+            logger.info(f"  📬 Inbox monitor active (every {poll_interval}s)")
+        else:
+            logger.info("  📬 Inbox monitor disabled (enable in config.yaml → email.inbox_monitor: true)")
 
         # Handle Ctrl+C gracefully
         signal.signal(signal.SIGINT, self._shutdown)
@@ -221,6 +297,16 @@ class TARS:
     def _shutdown(self, *args):
         """Graceful shutdown — stops agents, drains queue, then exits."""
         logger.info("\n\n  🛑 TARS shutting down...")
+
+        # Cleanup environment (restore clipboard, focus, DND, volume)
+        try:
+            cleanup_environment()
+        except Exception as e:
+            logger.warning(f"  ⚠️ Environment cleanup failed: {e}")
+
+        # Stop voice interface
+        if hasattr(self, 'voice') and self.voice.is_active:
+            self.voice.stop()
 
         # Flush any pending messages in the stream parser
         if hasattr(self, 'message_parser'):
@@ -233,6 +319,18 @@ class TARS:
         # Signal all running agents to stop
         self._kill_event.set()
         self.running = False
+
+        # Stop health watchdog
+        if hasattr(self, 'watchdog'):
+            self.watchdog.stop()
+
+        # Stop inbox monitor
+        if hasattr(self, 'inbox_monitor'):
+            self.inbox_monitor.stop()
+
+        # Disconnect MCP servers
+        if hasattr(self, 'mcp_client'):
+            self.mcp_client.disconnect_all()
 
         # Wait for current task to finish (up to 10s)
         try:
@@ -275,6 +373,51 @@ class TARS:
             self._last_snapshot = {}
             logger.warning(f"  ⚠️ Snapshot skipped: {e}")
 
+        # ── Setup environment (screens, apps, chrome, DND) ──
+        env_enabled = self.config.get("environment", {}).get("enabled", True)
+        if env_enabled:
+            logger.info("\n  🏗️  Setting up autonomous environment...")
+            try:
+                env_report = setup_environment(self.config)
+                self._env_report = env_report
+                self._screen_map = env_report.get("screens", {})
+                _init_step = lambda l, d, s="ok": self._init_steps.append({"label": l, "detail": d, "status": s, "ts": time.time() - self._init_start})
+                _init_step("Environment", f"{env_report['screens'].get('count', '?')} displays, apps arranged")
+                logger.info("")
+            except Exception as e:
+                logger.warning(f"  ⚠️ Environment setup failed: {e}")
+                self._env_report = {}
+                self._screen_map = {}
+        else:
+            logger.info("  🏗️  Environment setup disabled (enable in config.yaml → environment.enabled: true)")
+            self._env_report = {}
+            self._screen_map = {}
+
+        # ── Emit init sequence to dashboard ──
+        env_data = {}
+        if self._last_snapshot:
+            s = self._last_snapshot
+            env_data = {
+                "battery": s.get("battery", "?"),
+                "wifi": s.get("wifi", "?"),
+                "disk_free": s.get("disk", {}).get("free", "?") if isinstance(s.get("disk"), dict) else s.get("disk", "?"),
+                "volume": s.get("volume", "?"),
+                "dark_mode": s.get("dark_mode", False),
+                "running_apps": s.get("running_apps", [])[:20],
+                "screen_bounds": s.get("screen_bounds", "?"),
+                "frontmost_app": s.get("frontmost_app", "?"),
+            }
+
+        event_bus.emit("tars_init", {
+            "phase": "complete",
+            "steps": self._init_steps,
+            "environment": env_data,
+            "brain_llm": f"{self.config.get('brain_llm', {}).get('provider', '?')}/{self.config.get('brain_llm', {}).get('model', '?')}",
+            "agent_llm": f"{self.config['llm']['provider']}/{self.config['llm'].get('model', '?')}",
+            "version": "5.0",
+            "uptime_start": time.time(),
+        })
+
         # Start flight price tracker scheduler (background)
         try:
             from hands.flight_search import start_price_tracker_scheduler
@@ -283,9 +426,19 @@ class TARS:
         except Exception as e:
             logger.warning(f"  ⚠️  Price tracker scheduler skipped: {e}")
 
+        # Start voice interface (if enabled)
+        if self.voice.enabled:
+            if self.voice.start():
+                logger.info("  🎤 Voice interface listening on microphone")
+            else:
+                logger.warning("  ⚠️ Voice interface failed to start")
+
         # Start task worker thread (processes queue serially)
         worker = threading.Thread(target=self._task_worker, daemon=True)
         worker.start()
+
+        # Start health watchdog
+        self.watchdog.start()
 
         # Dashboard URL (don't auto-open — it interferes with Chrome browser tools)
         logger.info(f"  🌐 Open dashboard: http://localhost:8420\n")
@@ -334,7 +487,7 @@ class TARS:
                         event_bus.emit("imessage_received", {"message": task})
 
                     # Check kill switch — stops all running agents
-                    if any(kw.lower() in task.lower() for kw in self.kill_words):
+                    if any(re.search(r'\b' + re.escape(kw) + r'\b', task, re.IGNORECASE) for kw in self.kill_words):
                         logger.info(f"  🛑 Kill command received: {task}")
                         self._kill_event.set()
                         event_bus.emit("kill_switch", {"source": msg_source})
@@ -368,8 +521,30 @@ class TARS:
         Phase 1: Back-to-back messages have been accumulated and merged.
         The batch knows if it's a correction, addition, or new task.
         
+        Fast-path: standalone acknowledgments ("ok", "👍", "sure") are
+        handled without an LLM call — no need to burn Gemini tokens on "ok".
+        
         Queue it for the task worker to process.
         """
+        # ── Acknowledgment fast-path ──
+        # If the user just said "ok" / "sure" / "👍" with no active task
+        # waiting for input, there's nothing to do.  Log it and move on.
+        if self._is_standalone_ack(batch):
+            active = self._count_active_tasks()
+            if active == 0:
+                # No tasks running — this is just a casual ack with nothing pending.
+                # Don't waste an LLM call.  A silent acknowledgment is fine.
+                logger.info(f"  👍 Acknowledgment received (no active tasks) — skipping LLM call")
+                event_bus.emit("imessage_received", {"message": batch.merged_text})
+                return
+            # If tasks ARE running, the brain might be waiting for confirmation
+            # via wait_for_reply.  Let it through so the reader picks it up.
+            # But don't queue it as a NEW task — it's a reply, not a request.
+            logger.info(f"  👍 Acknowledgment while {active} task(s) active — passing through")
+            # The reader already has this message in chat.db, so the brain's
+            # wait_for_reply() will pick it up.  No need to double-queue.
+            return
+
         if batch.batch_type == "multi_task" and batch.individual_tasks:
             # Multiple independent tasks — queue each separately
             logger.info(f"  📨 Received {len(batch.individual_tasks)} separate tasks")
@@ -387,6 +562,61 @@ class TARS:
             info = f"({batch.batch_type})" if batch.batch_type != "single" else ""
             logger.info(f"  📨 Batch ready {info}: {batch.merged_text[:100]}")
             self._task_queue.put(batch)
+
+    def _is_standalone_ack(self, batch):
+        """Check if a batch is a standalone acknowledgment (ok, 👍, sure, etc.).
+
+        Returns True only for short messages that match acknowledgment
+        patterns and carry no real task content.
+        """
+        text = batch.merged_text.strip().lower()
+        if len(text) > 30:
+            return False  # Too long to be just an ack
+        for pattern in ACKNOWLEDGMENT_PATTERNS:
+            if re.match(pattern, text):
+                return True
+        return False
+
+    def _on_voice_message(self, text, source="voice"):
+        """
+        Called by VoiceInterface when user speaks a complete utterance.
+        
+        Feeds through the same message stream parser as iMessage,
+        so voice and text follow identical processing paths.
+        """
+        logger.info(f"  🎤 Voice input: {text[:100]}")
+        event_bus.emit("voice_input", {"message": text})
+
+        # Check kill switch
+        if any(re.search(r'\b' + re.escape(kw) + r'\b', text, re.IGNORECASE) for kw in self.kill_words):
+            logger.info(f"  🛑 Kill command via voice: {text}")
+            self._kill_event.set()
+            event_bus.emit("kill_switch", {"source": "voice"})
+            self.voice.speak("Kill switch activated. All agents stopped.")
+            time.sleep(1)
+            self._kill_event.clear()
+            return
+
+        # Feed through the same message stream parser as iMessage
+        self.message_parser.ingest(text, source="voice")
+
+    def _on_scheduled_task(self, task_text, task_id):
+        """
+        Called by TaskScheduler when a scheduled task is due.
+        
+        Creates a batch and queues it just like an iMessage or voice input.
+        """
+        logger.info(f"  ⏰ Scheduled task fired [{task_id}]: {task_text[:80]}")
+        event_bus.emit("scheduled_task", {"task": task_text, "task_id": task_id})
+
+        batch = MessageBatch(
+            messages=[],
+            merged_text=f"[Scheduled Task] {task_text}",
+            batch_type="single",
+            timestamp=time.time(),
+            source="scheduler",
+        )
+        self._task_queue.put(batch)
 
     def _process_task(self, task):
         """
@@ -473,6 +703,9 @@ class TARS:
             logger.info(f"  📨 [{task_id}] Message{batch_info}: {task_text[:120]}")
             logger.info(f"  {'═' * 50}\n")
 
+            # Register task with watchdog
+            self.watchdog.task_started(task_id)
+
             self.logger.info(f"[{task_id}] New message: {task_text}")
             event_bus.emit("task_received", {"task": task_text, "source": "agent", "task_id": task_id})
             event_bus.emit("status_change", {"status": "working", "label": f"WORKING ({self._count_active_tasks()})" })
@@ -505,11 +738,25 @@ class TARS:
 
             # Send the brain's final response to the user
             # BUT only if the brain didn't already send messages during its tool loop
-            if response and not response.startswith("🛑") and not self.brain._brain_sent_imessage:
+            # Read _brain_sent_imessage under the brain lock to prevent race with parallel tasks
+            with self.brain._lock:
+                brain_already_replied = self.brain._brain_sent_imessage
+            if response and not response.startswith("🛑") and not brain_already_replied:
                 try:
-                    self.executor.send_reply(response[:1500])
+                    self.executor.send_reply(response)
                 except Exception as e:
                     self.logger.warning(f"[{task_id}] Failed to send response: {e}")
+
+            # Store conversation in semantic memory for future recall
+            if response and self.memory.semantic and self.memory.semantic.available:
+                try:
+                    self.memory.semantic.store_conversation(
+                        user_message=task_text[:500],
+                        tars_response=response[:500],
+                        metadata={"task_id": task_id, "source": task_source},
+                    )
+                except Exception:
+                    pass  # Non-critical — don't let memory errors break tasks
 
             # Safety net: if brain returned an error, notify user
             if response and (response.startswith("❌") or response.startswith("⚠️")):
@@ -547,12 +794,17 @@ class TARS:
             )
             # Record in error tracker for pattern learning
             error_tracker.record_error(
-                error=str(e),
+                error=f"{type(e).__name__}: {e}",
                 context="task_processing",
-                details=task_text[:200],
+                source_file="tars.py",
+                details=f"Task: {task_text[:200]}",
+                params={"task_id": task_id, "task": task_text[:300]},
             )
 
         finally:
+            # Unregister task from watchdog
+            self.watchdog.task_completed(task_id)
+
             # Update status — check if other tasks are still running
             remaining = self._count_active_tasks() - 1  # -1 for this finishing thread
             if remaining <= 0:
@@ -562,6 +814,18 @@ class TARS:
 
     def _handle_task_error(self, task_id, task_text, response):
         """Handle error responses — notify user if brain didn't already."""
+        # Record brain-level error for pattern learning
+        try:
+            error_tracker.record_error(
+                error=response[:500],
+                context="brain_response",
+                tool="brain",
+                source_file="tars.py",
+                details=f"Brain returned error for task: {task_text[:200]}",
+                params={"task_id": task_id, "task": task_text[:300]},
+            )
+        except Exception:
+            pass
         try:
             already_notified = any(m in response.lower() for m in (
                 "rate limit", "429", "retries",

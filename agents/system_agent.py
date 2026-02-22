@@ -240,17 +240,25 @@ class SystemAgent(BaseAgent):
             elif name == "finder_tag":
                 return self._r(mac.finder_tag(inp["path"], inp["tag_name"]))
 
-            # ── Mail ──
+            # ── Mail (via unified email backend) ──
             elif name == "mail_read":
+                from hands import email as _mail
                 if inp.get("index"):
-                    return self._r(mac.mail_read_message(inp["index"]))
-                return self._r(mac.mail_read_inbox(inp.get("count", 5)))
+                    return self._r(_mail.read_message(inp["index"]))
+                return self._r(_mail.read_inbox(inp.get("count", 5)))
             elif name == "mail_search":
-                return self._r(mac.mail_search(inp["keyword"]))
+                from hands import email as _mail
+                return self._r(_mail.search_emails(keyword=inp["keyword"]))
             elif name == "mail_send":
-                return self._r(mac.mail_send(inp["to"], inp["subject"], inp["body"]))
+                from hands import email as _mail
+                return self._r(_mail.send_email(
+                    to=inp["to"], subject=inp["subject"], body=inp["body"],
+                    attachment_paths=inp.get("attachment_path"),
+                    from_address=inp.get("from_address", "tarsitgroup@outlook.com"),
+                ))
             elif name == "mail_unread":
-                return self._r(mac.mail_unread_count())
+                from hands import email as _mail
+                return self._r(_mail.get_unread_count())
 
             # ── Notes ──
             elif name == "notes_list":

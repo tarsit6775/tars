@@ -3,18 +3,17 @@ import { TarsProvider } from './context/ConnectionContext'
 import Starfield from './components/Starfield'
 import BootSequence from './components/BootSequence'
 import MissionControlBar from './components/MissionControlBar'
-import ThinkingStream from './components/ThinkingStream'
+import ActivityFeed from './components/ActivityFeed'
 import TaskPanel from './components/TaskPanel'
 import MessagePanel from './components/MessagePanel'
-import ActionLog from './components/ActionLog'
 import ProcessControl from './components/ProcessControl'
-import ConsoleOutput from './components/ConsoleOutput'
 import Notifications from './components/Notifications'
 import ShortcutOverlay from './components/ShortcutOverlay'
 import MobileNav from './components/MobileNav'
 import AnalyticsPage from './pages/Analytics'
 import MemoryPage from './pages/Memory'
 import SettingsPage from './pages/Settings'
+import EmailPage from './pages/Email'
 import { registerShortcut, initShortcuts } from './lib/shortcuts'
 import { requestNotificationPermission } from './lib/notifications'
 
@@ -26,9 +25,10 @@ function DashboardLayout() {
   useEffect(() => {
     initShortcuts()
     registerShortcut({ key: '1', description: 'Control view', handler: () => setActiveView('dashboard') })
-    registerShortcut({ key: '2', description: 'Analytics view', handler: () => setActiveView('analytics') })
-    registerShortcut({ key: '3', description: 'Memory view', handler: () => setActiveView('memory') })
-    registerShortcut({ key: '4', description: 'Settings view', handler: () => setActiveView('settings') })
+    registerShortcut({ key: '2', description: 'Email view', handler: () => setActiveView('email') })
+    registerShortcut({ key: '3', description: 'Analytics view', handler: () => setActiveView('analytics') })
+    registerShortcut({ key: '4', description: 'Memory view', handler: () => setActiveView('memory') })
+    registerShortcut({ key: '5', description: 'Settings view', handler: () => setActiveView('settings') })
     registerShortcut({ key: 'k', ctrl: true, description: 'Focus task input', handler: () => {
       const el = document.querySelector<HTMLInputElement>('.task-input-focus')
       el?.focus()
@@ -56,48 +56,29 @@ function DashboardLayout() {
       {/* Main content */}
       <main className="relative z-10 flex-1 overflow-hidden">
         {activeView === 'dashboard' && (
-          <div className="h-full flex flex-col">
-            {/* Desktop: 3-column layout */}
-            <div className="flex-1 hidden md:grid md:grid-cols-[220px_1fr_260px] gap-px bg-panel-border overflow-hidden">
-              {/* Left: Process Control + Tasks */}
-              <div className="bg-void-950 overflow-hidden flex flex-col">
-                <div className="shrink-0 border-b border-panel-border" style={{ maxHeight: '45%' }}>
-                  <ProcessControl />
-                </div>
-                <div className="flex-1 overflow-hidden">
-                  <TaskPanel />
-                </div>
-              </div>
-
-              {/* Center: Live Activity (main) + Thinking Stream */}
-              <div className="bg-void-950 overflow-hidden flex flex-col">
-                <div className="flex-[3] overflow-hidden relative border-b border-panel-border">
-                  <ConsoleOutput />
-                </div>
-                <div className="flex-[2] overflow-hidden relative">
-                  <ThinkingStream />
-                </div>
-              </div>
-
-              {/* Right: iMessage (conversation only) */}
-              <div className="bg-void-950 overflow-hidden">
-                <MessagePanel />
-              </div>
-            </div>
-
-            {/* Mobile */}
-            <div className="flex-1 md:hidden overflow-hidden bg-void-950 flex flex-col">
-              <div className="shrink-0 border-b border-panel-border" style={{ maxHeight: '35%' }}>
+          <div className="h-full flex">
+            {/* Left Sidebar: Status + Tasks (desktop only) */}
+            <div className="hidden md:flex md:flex-col w-[240px] shrink-0 border-r border-panel-border bg-void-950">
+              {/* Process status + controls */}
+              <div className="shrink-0 border-b border-panel-border">
                 <ProcessControl />
               </div>
-              <div className="flex-1 overflow-hidden relative">
-                <ConsoleOutput />
+              {/* Tasks list */}
+              <div className="flex-1 overflow-hidden">
+                <TaskPanel />
               </div>
             </div>
 
-            {/* Bottom: Action Log */}
-            <div className="h-40 border-t border-panel-border bg-void-950 hidden md:block overflow-hidden">
-              <ActionLog />
+            {/* Main Area: Activity Feed + Messages */}
+            <div className="flex-1 flex flex-col overflow-hidden bg-void-950">
+              {/* Activity Feed — main content */}
+              <div className="flex-1 overflow-hidden relative">
+                <ActivityFeed />
+              </div>
+              {/* Messages — compact bottom section (desktop) */}
+              <div className="h-48 shrink-0 border-t border-panel-border overflow-hidden hidden md:block">
+                <MessagePanel />
+              </div>
             </div>
           </div>
         )}
@@ -105,6 +86,12 @@ function DashboardLayout() {
         {activeView === 'analytics' && (
           <div className="h-full bg-void-950">
             <AnalyticsPage />
+          </div>
+        )}
+
+        {activeView === 'email' && (
+          <div className="h-full bg-void-950">
+            <EmailPage />
           </div>
         )}
 

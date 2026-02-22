@@ -1,4 +1,4 @@
-import { Brain, ListTodo, MessageSquare, BarChart3, Settings } from 'lucide-react'
+import { Brain, ListTodo, MessageSquare, BarChart3, Settings, Mail } from 'lucide-react'
 import clsx from 'clsx'
 
 interface MobileNavProps {
@@ -8,6 +8,7 @@ interface MobileNavProps {
 
 const TABS = [
   { id: 'dashboard', icon: Brain, label: 'Control' },
+  { id: 'email', icon: Mail, label: 'Email' },
   { id: 'tasks', icon: ListTodo, label: 'Tasks' },
   { id: 'messages', icon: MessageSquare, label: 'Messages' },
   { id: 'analytics', icon: BarChart3, label: 'Stats' },

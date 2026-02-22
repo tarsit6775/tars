@@ -29,8 +29,8 @@ except Exception as e:
 
 # 4. iMessage
 try:
-    from voice.imessage_read import iMessageReader
-    from voice.imessage_send import send_imessage
+    from voice.imessage_read import IMessageReader
+    from voice.imessage_send import IMessageSender
     checks.append("✅ iMessage read/send")
 except Exception as e:
     checks.append(f"❌ iMessage: {e}")

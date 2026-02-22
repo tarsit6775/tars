@@ -27,7 +27,10 @@ from hands.browser import (
     act_screenshot, act_handle_dialog, _detect_challenge,
     _activate_chrome, web_search,
     act_press_and_hold, act_solve_captcha,
+    act_fill_form, act_full_page_scan, act_smart_wait,
+    act_upload_file, act_handle_oauth_popup,
 )
+from hands.account_manager import read_verification_code, manage_account
 
 import logging
 logger = logging.getLogger("TARS")
@@ -104,6 +107,11 @@ BROWSER_TOOLS = [
         "input_schema": {"type": "object", "properties": {"number": {"type": "integer"}}, "required": ["number"]}
     },
     {
+        "name": "new_tab",
+        "description": "Open a new tab, optionally with a URL.",
+        "input_schema": {"type": "object", "properties": {"url": {"type": "string", "description": "URL to open in the new tab (optional)"}}, "required": []}
+    },
+    {
         "name": "close_tab",
         "description": "Close the current tab.",
         "input_schema": {"type": "object", "properties": {}}
@@ -144,6 +152,70 @@ BROWSER_TOOLS = [
         "input_schema": {"type": "object", "properties": {}}
     },
     {
+        "name": "fill_form",
+        "description": "Fill multiple form fields at once — like a human filling out a whole form. MUCH faster than typing one field at a time. Use after look() shows multiple empty fields. Pass a list of {selector, value} pairs.",
+        "input_schema": {"type": "object", "properties": {
+            "fields": {
+                "type": "array",
+                "description": "List of fields to fill. Each item: {selector: CSS selector from look(), value: text to type, type: 'text' or 'select'}",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "selector": {"type": "string", "description": "CSS selector from look() output"},
+                        "value": {"type": "string", "description": "Value to type or option to select"},
+                        "type": {"type": "string", "enum": ["text", "select"], "default": "text"}
+                    },
+                    "required": ["selector", "value"]
+                }
+            }
+        }, "required": ["fields"]}
+    },
+    {
+        "name": "read_otp",
+        "description": "Read a verification/OTP code from Mac Mail. Use when the page asks for an email confirmation code, verification code, or OTP. Polls Mail.app for recent messages and extracts the numeric code. Returns the code ready to type into the field.",
+        "input_schema": {"type": "object", "properties": {
+            "from_sender": {"type": "string", "description": "Filter by sender email, e.g. 'security@mail.instagram.com'. Optional."},
+            "subject_contains": {"type": "string", "description": "Filter by subject keyword, e.g. 'Instagram', 'verification'. Optional."},
+            "timeout": {"type": "integer", "description": "Max seconds to wait for the email (default 60)", "default": 60}
+        }}
+    },
+    {
+        "name": "full_scan",
+        "description": "Scan the ENTIRE page by auto-scrolling top to bottom. Collects ALL fields, buttons, and links across the full page.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "smart_wait",
+        "description": "Smart wait that detects page changes (navigation, DOM updates, network idle). Better than fixed-time wait().",
+        "input_schema": {"type": "object", "properties": {
+            "reason": {"type": "string", "description": "What to wait for: 'page_change', 'network_idle', 'dom_stable'", "default": "page_change"},
+            "timeout": {"type": "integer", "description": "Max seconds to wait", "default": 10}
+        }}
+    },
+    {
+        "name": "upload_file",
+        "description": "Upload a file to a file input element. Use for profile photos, documents, attachments.",
+        "input_schema": {"type": "object", "properties": {
+            "selector": {"type": "string", "description": "CSS selector for the file input (e.g., 'input[type=file]')"},
+            "file_path": {"type": "string", "description": "Absolute path to the file to upload"}
+        }, "required": ["selector", "file_path"]}
+    },
+    {
+        "name": "oauth_popup",
+        "description": "Handle OAuth login popups (Google, GitHub, etc.). Call to switch to popup window. Use provider='return' to switch back.",
+        "input_schema": {"type": "object", "properties": {
+            "provider": {"type": "string", "description": "OAuth provider name or 'return' to switch back", "default": ""}
+        }}
+    },
+    {
+        "name": "generate_totp",
+        "description": "Generate a TOTP 2FA code for a service. Use when a site asks for a 2FA/MFA/authenticator code.",
+        "input_schema": {"type": "object", "properties": {
+            "service": {"type": "string", "description": "Service name to look up the TOTP secret"},
+            "totp_secret": {"type": "string", "description": "Direct TOTP secret (base32 string) if not stored"}
+        }}
+    },
+    {
         "name": "done",
         "description": "Task is complete. Provide a summary of what was accomplished.",
         "input_schema": {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}
@@ -162,61 +234,130 @@ BROWSER_TOOLS = [
 
 BROWSER_AGENT_PROMPT = """You are TARS Browser Agent — you control Google Chrome via CDP (Chrome DevTools Protocol).
 
+## Core Operating Principle: OODA Loop
+Every step follows this cycle:
+1. **OBSERVE** → `look` at the page. Read the PAGE ASSESSMENT header.
+2. **ORIENT** → What type of page is this? Am I done? What's blocking me?
+3. **DECIDE** → What is the best next action?
+4. **ACT** → Execute it.
+
 ## ABSOLUTE RULE: ONE TOOL CALL PER STEP
 You MUST call exactly ONE tool per response. Never batch multiple tools.
 The cycle is: look → (one action) → look → (one action) → ...
 
-## CRITICAL RULE: USE THE EXACT VALUES FROM YOUR TASK
+## CRITICAL: USE EXACT VALUES FROM YOUR TASK
 Your task contains specific emails, passwords, names, and URLs. Use EXACTLY those values.
-NEVER substitute your own values. If the task says "type tarsmacbot2026@outlook.com", type exactly that.
+NEVER substitute your own values.
 
-## CRITICAL RULE: ONLY USE SELECTORS FROM `look` OUTPUT
+## CRITICAL: ONLY USE SELECTORS FROM `look` OUTPUT
 NEVER guess selector names. Use EXACTLY what `look` showed you.
-Modern pages use generated IDs like #floatingLabelInput4 — you MUST read `look` first.
+
+## 🔍 GOOGLE-FIRST NAVIGATION (CRITICAL — avoids CAPTCHAs and bot detection)
+**NEVER use `goto` to navigate directly to a signup, login, or service URL.**
+Direct URL navigation is a major bot signal — sites throw CAPTCHAs, block the session, or redirect endlessly.
+
+**ALWAYS search Google first to reach a website:**
+1. `goto("https://www.google.com/search?q=DoorDash+developer+portal+sign+up")` — search Google
+2. `look` — see the search results
+3. `click` the official result link
+4. Now you're on the site with a natural Google referrer — sites trust this traffic
+
+**Why:** Real humans Google things. Direct URL entry is a bot pattern. Searching Google sets proper Referer headers, bypasses CAPTCHAs, and finds the correct page even if URLs changed.
+
+- ✅ `goto("https://www.google.com/search?q=Stripe+developer+signup")` → click result
+- ❌ `goto("https://dashboard.stripe.com/register")` — bot pattern, triggers CAPTCHA
+
+**Exception:** Already ON a site and navigating within it (clicking links, buttons) — that's fine.
+
+## EFFICIENCY: USE fill_form FOR FORMS (CRITICAL)
+When `look` shows a form with multiple empty fields, use `fill_form` to fill ALL fields at once:
+```
+fill_form(fields=[
+  {selector: '#email', value: 'user@example.com'},
+  {selector: '#name', value: 'John Doe'},
+  {selector: '#password', value: 'SecurePass123!'}
+])
+```
+This is 3x faster than calling `type` on each field separately.
+A signup flow should take 8-12 steps, NOT 30-40.
 
 ## Step-by-Step Workflow
-1. `look` → see what fields/buttons are on the page
-2. ONE action: `type` into a field, or `click` a button, or `select` a dropdown
-3. `wait` 2 seconds
-4. `look` again → see the updated page
-5. Repeat
+1. `look` → read PAGE ASSESSMENT + all fields/buttons on the page
+2. `fill_form` with ALL empty fields from look output (or `type` for single field)
+3. Check the tool result — all fields filled?
+4. `click` the submit/next button
+5. `wait` 2-3 seconds after state-changing clicks
+6. `look` again → see the updated page
+7. If new page: repeat from step 2
+8. Check for 🚨 FORM ERRORS — fix and retry
+
+## Account Creation & Developer Portals
+When creating accounts on developer portals:
+1. **Google it first** → `goto("https://www.google.com/search?q=SERVICE+developer+signup")` → `look` → click official result
+2. `look` at the signup page → see the form
+3. `fill_form` ALL visible fields (email, name, password, company)
+4. Click submit → handle email verification with `read_otp`
+5. After login, navigate to API/Developer section (Dashboard, API Keys, Apps)
+6. Create an app if needed → copy API keys
+7. Report ALL credentials in done() summary
+- ⚠️ NEVER `goto` directly to signup/login URLs — always search Google first
+
+## Goal Check (EVERY Step)
+- "Is my goal ALREADY achieved?" → done() with evidence
+- "Am I already logged in?" → done()
+- "Is something blocking me?" → Dismiss overlay, solve CAPTCHA first
 
 ## Clicking Buttons
-- Use the button's visible TEXT without brackets: click(target="Next") ✅
-- NOT click(target="[Next]") ❌
-- NOT click(target="#idBtn_Next") ❌ (don't guess IDs)
+- Use the button's visible TEXT: click(target="Next") ✅
+- NOT click(target="[Next]") ❌ (don't guess IDs)
 
-## Dropdowns
-If `look` shows a CUSTOM DROPDOWN like "Email domain options (showing: @hotmail.com)":
-- Use `select(dropdown="Email domain options", option="@outlook.com")` to change it
+## Multi-Page Forms
+Signup forms are often MULTI-PAGE:
+  Page 1: Email/name/password → fill_form + click "Sign up"
+  Page 2: Birthday/profile → fill_form + click "Next"
+  Page 3: CAPTCHA → solve_captcha()
+  Page 4: Verification code → read_otp() to get code from email!
+After submit, seeing NEW FIELDS = the form advanced. Fill them. DON'T call stuck.
 
-## Example: Filling a Microsoft signup form
-Step 1: look() → sees Email field #floatingLabelInput4
-Step 2: type(selector="#floatingLabelInput4", text="tarsmacbot2026@outlook.com")
-Step 3: click(target="Next")
-Step 4: wait(seconds=2)
-Step 5: look() → sees Password field #floatingLabelInput13
-Step 6: type(selector="#floatingLabelInput13", text="MyPassword123!")
-Step 7: click(target="Next")
-...and so on, ONE tool per step.
+## Verification / Confirmation Code
+When the page asks for a code:
+  1. Call `read_otp(subject_contains='ServiceName')` — polls Mail for up to 120s
+  2. Type the code into the input field
+  3. Click confirm
+  ⚠️ DO NOT navigate away from the code page!
+  ⚠️ DO NOT call stuck() on a code page — use read_otp.
+
+## NEVER GO BACK TO A PREVIOUS URL
+Going back DESTROYS multi-page form progress.
 
 ## CAPTCHA Handling
-If the page says "Press and hold the button" or "prove you're human":
-- Call `solve_captcha()` — it auto-detects the CAPTCHA type and solves it.
-- After solving, call `wait(seconds=3)` then `look` to see the new page.
-- If it says "Loading..." after solving, wait a few more seconds.
+Call `solve_captcha()` when you see CAPTCHA challenges.
+
+## Form Errors = Feedback, Not Failure
+When you see form errors, apply these recovery playbooks:
+- "Username taken" / "Username isn't available" → Append random digits (e.g. tarsdev847) and re-type
+- "Email already in use" / "Already registered" → Switch to LOGIN flow with the same credentials
+- "Password too weak" / "Password doesn't meet requirements" → Use stronger password: TarsAgent2026!#
+- "Invalid email" → Check for typos, use tarsitgroup@outlook.com (NOT @example.com)
+- "Too many attempts" / "Try again later" → wait(30), then refresh() and retry
+- "Something went wrong" → wait(5), refresh(), try again
+- "Verify you're human" / CAPTCHA → call solve_captcha()
+- "Session expired" → refresh() and restart the form
+NEVER call stuck() on fixable form errors.
 
 ## RULES
-1. ONE tool call per response. No exceptions.
-2. ONLY use selectors from `look`. Never guess.
-3. Use EXACTLY the values from your task instructions.
-4. Click buttons by TEXT ("Next"), never with brackets ("[Next]") or guessed IDs.
-5. If `look` shows CUSTOM DROPDOWNS, use `select` to pick from them.
-6. If ⚠️ ERRORS appear in `look`, read them and adapt.
-7. NEVER call `done` unless the page clearly shows success (welcome, inbox, confirmation).
-8. If stuck after 3+ retries on the same step, call `stuck` honestly.
-9. `js` is READ-ONLY. Never use it to click or modify.
-10. If you see a CAPTCHA / "prove you're human", call `solve_captcha()` immediately.
+1. ONE tool call per response.
+2. ONLY use selectors from `look`.
+3. Use EXACTLY the values from your task.
+4. Use `fill_form` for multi-field forms — NOT individual `type` calls.
+5. Fix FORM ERRORS — don't call stuck.
+6. NEVER call done unless page clearly shows success.
+7. NEVER call stuck after just 3-4 steps. Try 3+ different approaches.
+8. `js` is READ-ONLY.
+9. Multi-page forms: new fields = PROGRESS.
+10. Report what you ACTUALLY SEE, not what you expected.
+11. A typical account creation should take 8-15 steps, not 40.
+12. GOOGLE FIRST — never `goto` a signup/login URL. Search Google, click the result.
 """
 
 
@@ -249,14 +390,35 @@ class BrowserAgent:
             if name == "wait_for":   return act_wait_for_text(inp["text"])
             if name == "tabs":       return act_get_tabs()
             if name == "switch_tab": return act_switch_tab(inp["number"])
+            if name == "new_tab":   return act_new_tab(inp.get("url", ""))
             if name == "close_tab":  return act_close_tab()
             if name == "back":       return act_back()
             if name == "forward":    return act_forward()
             if name == "refresh":    return act_refresh()
             if name == "screenshot": return act_screenshot()
             if name == "js":         return act_run_js(inp["code"])
+            if name == "fill_form":  return act_fill_form(inp.get("fields", []))
+            if name == "full_scan":  return act_full_page_scan()
+            if name == "smart_wait": return act_smart_wait(inp.get("reason", "page_change"), inp.get("timeout", 10))
+            if name == "upload_file": return act_upload_file(inp["selector"], inp["file_path"])
+            if name == "oauth_popup": return act_handle_oauth_popup(inp.get("provider", ""))
+            if name == "generate_totp":
+                result = manage_account({"action": "generate_totp", "service": inp.get("service", ""), "totp_secret": inp.get("totp_secret", "")})
+                return result.get("content", str(result))
             if name == "hold":       return act_press_and_hold(inp.get("target", "captcha"), inp.get("duration", 10))
             if name == "solve_captcha": return act_solve_captcha()
+            if name == "read_otp":
+                timeout = max(inp.get("timeout", 90), 90)  # Minimum 90s — emails can take time
+                result = read_verification_code(
+                    from_sender=inp.get("from_sender"),
+                    subject_contains=inp.get("subject_contains"),
+                    timeout=timeout,
+                )
+                if result.get("code"):
+                    return f"✅ Verification code: {result['code']} — Type this into the code field now."
+                if result.get("raw_email"):
+                    return f"Found emails but no clear code. Email content:\n{result['raw_email'][:500]}\n\nLook for a code manually in the text above."
+                return result.get("content", "No verification code found after waiting. Check if the email was sent to the correct address.")
             return f"Unknown tool: {name}"
         except Exception as e:
             return f"ERROR: {e}"
@@ -376,16 +538,48 @@ class BrowserAgent:
                         # Guard 3: verify by checking the current page
                         verify = act_inspect_page()
                         verify_lower = verify.lower()
-                        fail_signals = ["signup", "sign up", "create account", "create your", "enter your", "password", "username", "create a", "register", "get started", "floatinglabel", "prove you're human", "press and hold", "captcha"]
-                        success_signals = ["welcome", "inbox", "dashboard", "account created", "you're all set", "verify your email", "confirmation", "successfully"]
-                        has_fail = any(s in verify_lower for s in fail_signals)
+                        # Only block done() if the page clearly looks like an INCOMPLETE signup/login form
+                        # Check FIELDS section specifically — "password" in a settings page is fine
+                        fields_section = ""
+                        for line in verify.split("\n"):
+                            if line.startswith("FIELDS:"):
+                                fields_section = verify_lower[verify_lower.index("fields:"):]
+                                # Only get up to next section
+                                for end_marker in ["buttons:", "links:", "dropdowns:", "checkboxes:", "errors:", "iframes:"]:
+                                    if end_marker in fields_section[8:]:
+                                        fields_section = fields_section[:fields_section.index(end_marker, 8)]
+                                        break
+                                break
+                        # Signals that the page is still an unfilled signup/login FORM
+                        form_signals = ["sign up", "create account", "create your", "register", "get started", "create a", "join now"]
+                        captcha_signals = ["prove you're human", "press and hold", "captcha", "verify you are human"]
+                        # Signals that OTP/verification is still pending — NOT done yet
+                        otp_signals = ["confirmation code", "enter the code", "enter code", "verification code", "we sent a code", "check your email"]
+                        # Signals the task succeeded
+                        success_signals = ["welcome", "inbox", "dashboard", "account created", "you're all set", "successfully", "feed", "home", "profile"]
+                        # Check for form errors — those always mean NOT done
+                        has_form_errors = "🚨 form errors:" in verify_lower
+                        # Only consider it a fail if signup keywords are in buttons/page title AND no success signals
+                        has_form_signal = any(s in verify_lower for s in form_signals)
+                        has_captcha = any(s in verify_lower for s in captcha_signals)
+                        has_otp_pending = any(s in verify_lower for s in otp_signals)
                         has_success = any(s in verify_lower for s in success_signals)
-                        if has_fail and not has_success:
+                        # Reject: form still showing signup buttons + no success indicators
+                        if (has_form_signal or has_captcha or has_form_errors) and not has_success:
                             logger.warning(f"  ⚠️ Rejecting 'done' — page still shows signup/form fields")
                             tool_results.append({
                                 "type": "tool_result",
                                 "tool_use_id": tid,
                                 "content": f"REJECTED: Page still shows signup/login form. Current page:\n{verify[:1500]}\n\nYou are NOT done yet. Continue filling the form or call 'stuck'.",
+                            })
+                            continue
+                        # Reject: OTP/verification code page — not done until code is entered
+                        if has_otp_pending and not has_success:
+                            logger.warning(f"  ⚠️ Rejecting 'done' — page still needs verification code")
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": tid,
+                                "content": f"REJECTED: Page is asking for a verification/confirmation code. You are NOT done yet. Call read_otp(subject_contains='...') to get the code from Mac Mail, type it into the field, then submit.\n\nCurrent page:\n{verify[:1500]}",
                             })
                             continue
                         logger.info(f"  ✅ Done: {summary[:150]}")

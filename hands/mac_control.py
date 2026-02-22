@@ -729,9 +729,11 @@ def mail_send(to_address, subject, body, attachment_path=None, from_address="tar
         if not os.path.isfile(attachment_path):
             return {"success": False, "error": True, "content": f"Attachment not found: {attachment_path}"}
         # Convert to POSIX file for AppleScript
+        # visible:true ensures Mail.app fully renders the message (fixes draft-only bug)
+        # After send, poll outbox until message leaves (Exchange takes ~12s with attachments)
         script = f'''
         tell application "Mail"
-            set msg to make new outgoing message with properties {{subject:"{safe_subject}", content:"{safe_body}", visible:false}}
+            set msg to make new outgoing message with properties {{subject:"{safe_subject}", content:"{safe_body}", visible:true}}
             tell msg
                 make new to recipient at end of to recipients with properties {{address:"{to_address}"}}
                 set senderAddr to "{from_address}"
@@ -739,7 +741,21 @@ def mail_send(to_address, subject, body, attachment_path=None, from_address="tar
                 set theAttachment to POSIX file "{attachment_path}"
                 make new attachment with properties {{file name:theAttachment}} at after last paragraph
             end tell
+            -- Wait for attachment to load before sending
+            delay 3
             send msg
+            -- Poll outbox until message leaves (Exchange/IMAP needs ~12s)
+            set maxWait to 30
+            set waited to 0
+            repeat while waited < maxWait
+                delay 2
+                set waited to waited + 2
+                set oCount to count of (messages of outbox)
+                if oCount = 0 then
+                    return "sent"
+                end if
+            end repeat
+            return "outbox_stuck"
         end tell
         '''
     else:
@@ -755,7 +771,16 @@ def mail_send(to_address, subject, body, attachment_path=None, from_address="tar
     result = _run_applescript_stdin(script, timeout=60)
     if result["success"]:
         att_info = f" (with attachment: {os.path.basename(attachment_path)})" if attachment_path else ""
-        result["content"] = f"Email sent to {to_address}: {subject}{att_info}"
+        if result.get("content") == "outbox_stuck":
+            result["success"] = False
+            result["error"] = True
+            result["content"] = (
+                f"Email to {to_address} was created but may be stuck in Outbox. "
+                f"Mail.app might need manual intervention to send. "
+                f"Check Mail.app > Outbox."
+            )
+        else:
+            result["content"] = f"Email sent to {to_address}: {subject}{att_info}"
     return result
 
 

@@ -3254,185 +3254,10 @@ def _generate_dates_excel(origin_code, dest_code, date_results, start, end):
 #  PHASE 6 — Send HTML Email via SMTP (Outlook Direct)
 # ═══════════════════════════════════════════════════════
 
-def _send_html_email(to_address, subject, html_body, attachment_path="", from_address="tarsitgroup@outlook.com"):
-    """Send a rich HTML email via Outlook SMTP directly.
-
-    Uses Python smtplib + email.mime for guaranteed HTML rendering.
-    No more Mail.app AppleScript — this ensures the HTML actually shows
-    with charts, colors, and formatting in every email client.
-
-    Outlook SMTP: smtp-mail.outlook.com:587 (STARTTLS)
-    """
-    import smtplib
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text import MIMEText
-    from email.mime.base import MIMEBase
-    from email import encoders
-
-    SMTP_SERVER = "smtp-mail.outlook.com"
-    SMTP_PORT = 587
-    SMTP_USER = from_address
-    # App password for Outlook SMTP — stored here for simplicity
-    SMTP_PASS = _get_smtp_password()
-
-    if not SMTP_PASS:
-        # Fallback to Mail.app AppleScript if no SMTP password configured
-        return _send_html_email_mailapp(to_address, subject, html_body, attachment_path, from_address)
-
-    try:
-        msg = MIMEMultipart("mixed")
-        msg["From"] = f"TARS Flight Intel <{from_address}>"
-        msg["To"] = to_address
-        msg["Subject"] = subject
-        msg["X-Mailer"] = "TARS Flight Intelligence v5.0"
-
-        # Attach HTML body — this is the key: MIMEText with 'html' subtype
-        html_part = MIMEText(html_body, "html", "utf-8")
-        msg.attach(html_part)
-
-        # Attach Excel file if provided
-        if attachment_path and os.path.isfile(attachment_path):
-            with open(attachment_path, "rb") as f:
-                part = MIMEBase("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                part.set_payload(f.read())
-                encoders.encode_base64(part)
-                filename = os.path.basename(attachment_path)
-                part.add_header("Content-Disposition", f"attachment; filename=\"{filename}\"")
-                msg.attach(part)
-
-        # Send via Outlook SMTP
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(from_address, to_address, msg.as_string())
-
-        return {"success": True, "content": f"HTML email sent to {to_address}: {subject}"}
-
-    except smtplib.SMTPAuthenticationError:
-        logger.warning("    ⚠️ SMTP auth failed — falling back to Mail.app")
-        return _send_html_email_mailapp(to_address, subject, html_body, attachment_path, from_address)
-    except Exception as e:
-        logger.warning(f"    ⚠️ SMTP failed ({e}) — falling back to Mail.app")
-        return _send_html_email_mailapp(to_address, subject, html_body, attachment_path, from_address)
-
-
-def _get_smtp_password():
-    """Load SMTP password from config or environment."""
-    # Try environment variable first
-    pwd = os.environ.get("TARS_SMTP_PASSWORD", "")
-    if pwd:
-        return pwd
-    # Try config.yaml
-    try:
-        config = _load_config()
-        return config.get("email", {}).get("smtp_password", "")
-    except Exception:
-        return ""
-
-
-def _send_html_email_mailapp(to_address, subject, html_body, attachment_path="", from_address="tarsitgroup@outlook.com"):
-    """Send HTML email via Microsoft Outlook (preferred) or Mail.app (fallback).
-    
-    Outlook handles HTML content + attachments correctly.
-    Mail.app has a known bug where adding attachments resets HTML body.
-    """
-    import subprocess
-    import tempfile
-
-    html_file = tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False)
-    html_file.write(html_body)
-    html_file.close()
-
-    safe_subject = subject.replace('\\', '\\\\').replace('"', '\\"')
-
-    # Try Microsoft Outlook first (handles HTML + attachments properly)
-    outlook_result = _send_via_outlook(to_address, safe_subject, html_file.name, attachment_path)
-    if outlook_result.get("success"):
-        try: os.unlink(html_file.name)
-        except Exception: pass
-        return outlook_result
-
-    # Fallback: Mail.app (set HTML AFTER attachment to avoid body reset bug)
-    logger.warning(f"    ⚠️ Outlook failed, trying Mail.app...")
-    if attachment_path and os.path.isfile(attachment_path):
-        script = f'''
-        set htmlContent to read POSIX file "{html_file.name}" as «class utf8»
-        tell application "Mail"
-            set msg to make new outgoing message with properties {{subject:"{safe_subject}", visible:false}}
-            tell msg
-                make new to recipient at end of to recipients with properties {{address:"{to_address}"}}
-                set theAttachment to POSIX file "{attachment_path}"
-                make new attachment with properties {{file name:theAttachment}} at after last paragraph
-                delay 1
-                set html content to htmlContent
-            end tell
-            delay 1
-            send msg
-        end tell
-        '''
-    else:
-        script = f'''
-        set htmlContent to read POSIX file "{html_file.name}" as «class utf8»
-        tell application "Mail"
-            set msg to make new outgoing message with properties {{subject:"{safe_subject}", visible:false}}
-            tell msg
-                set html content to htmlContent
-                make new to recipient at end of to recipients with properties {{address:"{to_address}"}}
-            end tell
-            send msg
-        end tell
-        '''
-
-    try:
-        result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=60)
-        os.unlink(html_file.name)
-        if result.returncode == 0:
-            return {"success": True, "content": f"HTML email sent via Mail.app to {to_address}: {subject}"}
-        else:
-            return {"success": False, "content": f"Mail.app error: {result.stderr}"}
-    except Exception as e:
-        try: os.unlink(html_file.name)
-        except Exception: pass
-        return {"success": False, "content": f"Email failed: {e}"}
-
-
-def _send_via_outlook(to_address, subject, html_file_path, attachment_path=""):
-    """Send HTML email via Microsoft Outlook AppleScript.
-    
-    Outlook properly renders HTML body AND supports attachments without
-    stripping the HTML content (unlike Mail.app).
-    """
-    import subprocess
-
-    attachment_block = ""
-    if attachment_path and os.path.isfile(attachment_path):
-        attachment_block = f'''
-                make new attachment with properties {{file:POSIX file "{attachment_path}"}}
-        '''
-
-    script = f'''
-    set htmlContent to read POSIX file "{html_file_path}" as «class utf8»
-    tell application "Microsoft Outlook"
-        set newMsg to make new outgoing message with properties {{subject:"{subject}", content:htmlContent}}
-        tell newMsg
-            make new to recipient with properties {{email address:{{address:"{to_address}"}}}}
-            {attachment_block}
-        end tell
-        send newMsg
-    end tell
-    '''
-
-    try:
-        result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=60)
-        if result.returncode == 0:
-            return {"success": True, "content": f"HTML email sent via Outlook to {to_address}: {subject}"}
-        else:
-            logger.warning(f"    ⚠️ Outlook error: {result.stderr[:200]}")
-            return {"success": False, "content": f"Outlook error: {result.stderr}"}
-    except Exception as e:
-        return {"success": False, "content": f"Outlook failed: {e}"}
+# ── Legacy email functions removed ──
+# _send_html_email, _get_smtp_password, _send_html_email_mailapp, _send_via_outlook
+# All email sending is now handled by hands/email.py → send_email()
+# which provides SMTP→Mail.app fallback, HTML, CC/BCC, attachments, and templates.
 
 
 # ═══════════════════════════════════════════════════════
@@ -3498,10 +3323,13 @@ def search_flights_report(
             html = _html_flight_report_email(origin_code, dest_code, depart, ret_parsed, flights, search_url,
                                               price_insight=price_insight, return_flight=return_flight,
                                               tracker_suggestion=tracker_suggestion)
-            mail_result = _send_html_email(
-                to_address=email_to,
+            from hands.email import send_email as _unified_send
+            mail_result = _unified_send(
+                to=email_to,
                 subject=f"✈️ {origin_code}→{dest_code} Flight Report · {cheapest.get('price', '')} cheapest",
-                html_body=html, attachment_path=excel_path,
+                body=html, html=True,
+                attachment_paths=excel_path if excel_path else None,
+                from_address="tarsitgroup@outlook.com",
             )
             if mail_result.get("success"):
                 emailed = True
@@ -3728,10 +3556,13 @@ def find_cheapest_dates(
                 origin_code, dest_code, date_results,
                 start.strftime('%b %d'), end.strftime('%b %d, %Y'),
             )
-            mail_result = _send_html_email(
-                to_address=email_to,
+            from hands.email import send_email as _unified_send
+            mail_result = _unified_send(
+                to=email_to,
                 subject=f"📊 Cheapest Dates: {origin_code}→{dest_code} · {cheapest['price']} lowest",
-                html_body=html, attachment_path=excel_path,
+                body=html, html=True,
+                attachment_paths=excel_path if excel_path else None,
+                from_address="tarsitgroup@outlook.com",
             )
             if mail_result.get("success"):
                 emailed = True
@@ -3937,7 +3768,8 @@ def _send_price_alert(tracker, current_price, airline, booking_link):
 
     try:
         html = _html_price_alert_email(origin, dest, target, current_price, airline, depart, booking_link, tracker_id)
-        _send_html_email(to_address=email_to, subject=f"🔔 Price Alert: {origin}→{dest} dropped to ${current_price}!", html_body=html)
+        from hands.email import send_email as _unified_send
+        _unified_send(to=email_to, subject=f"🔔 Price Alert: {origin}→{dest} dropped to ${current_price}!", body=html, html=True, from_address="tarsitgroup@outlook.com")
     except Exception as e:
         logger.warning(f"    ⚠️ Alert email failed: {e}")
 

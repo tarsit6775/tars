@@ -1,0 +1,7 @@
+{
+  "name": "test_smoke",
+  "subject": "Test {{name}}",
+  "body": "Hello {{name}}!",
+  "html": false,
+  "created": "2026-02-20T20:02:58.421188"
+}

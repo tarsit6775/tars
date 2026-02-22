@@ -14,7 +14,10 @@ import os
 import threading
 import time
 import mimetypes
+import secrets
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.cookies import SimpleCookie
+from urllib.parse import urlparse, parse_qs
 import websockets
 
 from utils.event_bus import event_bus
@@ -48,14 +51,62 @@ class DashboardHTTPHandler(SimpleHTTPRequestHandler):
         """Handle GET — serve /api/health or fall through to static files."""
         if self.path == "/api/health":
             self._handle_health()
-        else:
-            super().do_GET()
+            return
+
+        # Auth check — require valid token via query param or cookie
+        if not self._check_auth():
+            self.send_response(401)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<h2>401 Unauthorized</h2><p>Add <code>?token=YOUR_TOKEN</code> to the URL. Check the TARS console for the token.</p>")
+            return
+
+        # If token is in query param, set it as a cookie so future requests work
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        if "token" in qs:
+            # Redirect to clean URL after setting cookie
+            self.send_response(302)
+            self.send_header("Set-Cookie", f"tars_token={qs['token'][0]}; Path=/; HttpOnly; SameSite=Strict")
+            clean_path = parsed.path or "/"
+            self.send_header("Location", clean_path)
+            self.end_headers()
+            return
+
+        super().do_GET()
+
+    def _check_auth(self):
+        """Validate session token from query param or cookie."""
+        expected = TARSServer._session_token
+        if not expected:
+            return True  # No token configured — allow all
+
+        # Check query param
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        if qs.get("token", [None])[0] == expected:
+            return True
+
+        # Check cookie
+        cookie_header = self.headers.get("Cookie", "")
+        if cookie_header:
+            cookies = SimpleCookie()
+            try:
+                cookies.load(cookie_header)
+                if cookies.get("tars_token") and cookies["tars_token"].value == expected:
+                    return True
+            except Exception:
+                pass
+
+        return False
 
     def _handle_health(self):
         """Return JSON health status: uptime, agents, queue, memory."""
         import resource
         try:
-            uptime = time.time() - TARSServer._boot_time
+            uptime = 0
+            if DashboardHTTPHandler._server_ref:
+                uptime = time.time() - DashboardHTTPHandler._server_ref._boot_time
             agents = agent_monitor.get_dashboard_data()
             stats = event_bus.get_stats()
 
@@ -102,19 +153,37 @@ class DashboardHTTPHandler(SimpleHTTPRequestHandler):
 class TARSServer:
     """Runs the dashboard HTTP server + WebSocket server."""
 
-    _boot_time = time.time()  # Server start timestamp for uptime calc
+    _session_token = None  # Set on first start, printed to console
 
     def __init__(self, memory_manager=None, tars_instance=None):
         self.memory = memory_manager
         self.tars = tars_instance
         self._ws_loop = None
         self._thread = None
+        self._boot_time = time.time()  # Reset on each restart for accurate uptime
+
+        # Generate a random session token for localhost auth
+        # This prevents other users on the same Mac from accessing the dashboard
+        if TARSServer._session_token is None:
+            TARSServer._session_token = secrets.token_urlsafe(24)
 
     def start(self):
         """Start both servers in a background thread."""
         DashboardHTTPHandler._server_ref = self  # Wire the server ref for /api/health
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+
+        # Print the session token so the user can access the dashboard
+        print(f"\n  🔑 Dashboard token: \033[33m{TARSServer._session_token}\033[0m")
+        print(f"  🌐 Open: \033[36mhttp://localhost:{HTTP_PORT}?token={TARSServer._session_token}\033[0m\n")
+
+        # Write token to a known file so CLI tools (test runners, scripts) can auto-connect
+        try:
+            token_path = os.path.join(os.path.dirname(__file__), ".dashboard_token")
+            with open(token_path, "w") as f:
+                f.write(TARSServer._session_token)
+        except Exception:
+            pass
 
     def _run(self):
         """Run the async event loop for WebSocket + HTTP."""
@@ -137,8 +206,43 @@ class TARSServer:
     async def _run_ws(self):
         """Run WebSocket server for real-time events."""
         async def handler(websocket, path=None):
-            # Send history to new client
-            for event in event_bus.get_history():
+            # Auth check — require token in query param or first message
+            # WebSocket URL: ws://localhost:8421?token=xxx
+            # websockets v15: use websocket.request.path
+            # websockets v10-11 (legacy): use websocket.path
+            request_path = ''
+            if hasattr(websocket, 'request') and hasattr(websocket.request, 'path'):
+                request_path = websocket.request.path or ''
+            elif hasattr(websocket, 'path'):
+                request_path = websocket.path or ''
+            parsed = urlparse(request_path)
+            qs = parse_qs(parsed.query)
+            token = qs.get("token", [None])[0]
+
+            # Also check cookies from the HTTP upgrade request
+            if not token:
+                cookies_header = ''
+                if hasattr(websocket, 'request_headers'):
+                    cookies_header = websocket.request_headers.get('Cookie', '')
+                elif hasattr(websocket, 'request') and hasattr(websocket.request, 'headers'):
+                    cookies_header = str(websocket.request.headers.get('Cookie', ''))
+                if cookies_header:
+                    cookies = SimpleCookie()
+                    try:
+                        cookies.load(cookies_header)
+                        if cookies.get("tars_token"):
+                            token = cookies["tars_token"].value
+                    except Exception:
+                        pass
+
+            expected = TARSServer._session_token
+            if expected and token != expected:
+                await websocket.close(4001, "Unauthorized — invalid session token")
+                return
+
+            # Send recent history to new client (cap at 100 to avoid blocking on slow connections)
+            history = event_bus.get_history()
+            for event in history[-100:]:
                 try:
                     await websocket.send(json.dumps(event))
                 except Exception:
@@ -213,6 +317,18 @@ class TARSServer:
                 # This single-path design prevents double-processing.
                 message = data.get("message", "")
                 if message and self.tars:
+                    # Remote connections require passphrase (same gate as send_task)
+                    remote = websocket.remote_address if hasattr(websocket, 'remote_address') else None
+                    is_local = remote and remote[0] in ("127.0.0.1", "::1", "localhost")
+                    if not is_local:
+                        expected = (self.tars.config.get("relay", {}).get("passphrase") or "").strip()
+                        if not expected:
+                            await websocket.send(json.dumps({"type": "error", "data": {"message": "Rejected: relay passphrase not configured"}}))
+                            return
+                        if data.get("passphrase") != expected:
+                            await websocket.send(json.dumps({"type": "error", "data": {"message": "Unauthorized: invalid passphrase"}}))
+                            return
+
                     # Emit event so dashboard sees it as an incoming user message
                     event_bus.emit("imessage_received", {"message": message, "source": "dashboard"})
 
@@ -224,8 +340,11 @@ class TARSServer:
                 await websocket.send(json.dumps({"type": "agent_status", "data": agent_data}))
 
             elif msg_type == "kill":
+                if not self.tars:
+                    await websocket.send(json.dumps({"type": "error", "data": {"message": "TARS instance not available"}}))
+                    return
                 # Require passphrase for kill from dashboard
-                expected = ((self.tars.config.get("relay", {}).get("passphrase") or "").strip()) if self.tars else ""
+                expected = (self.tars.config.get("relay", {}).get("passphrase") or "").strip()
                 if not expected:
                     await websocket.send(json.dumps({"type": "error", "data": {"message": "Rejected: relay passphrase not configured"}}))
                     return
@@ -256,4 +375,8 @@ class TARSServer:
                     await websocket.send(json.dumps({"type": "error", "data": {"message": f"Config key '{key}' is not mutable from dashboard"}}))
 
         except Exception as e:
-            await websocket.send(json.dumps({"type": "error", "data": {"message": str(e)}}))
+            # Sanitize: don't leak internal errors to remote connections
+            remote = websocket.remote_address if hasattr(websocket, 'remote_address') else None
+            is_local = remote and remote[0] in ("127.0.0.1", "::1", "localhost")
+            err_msg = str(e) if is_local else "Internal server error"
+            await websocket.send(json.dumps({"type": "error", "data": {"message": err_msg}}))

@@ -150,36 +150,64 @@ class CDP:
         return None
 
     def _launch_chrome(self):
-        """Launch Chrome with remote debugging enabled."""
-        # Chrome requires --user-data-dir for remote debugging
-        data_dir = os.path.join(os.path.expanduser("~"), ".tars_chrome_profile")
+        """Launch Chrome with remote debugging enabled on the TARS screen."""
+        # Check for Chrome Canary first (complete isolation from user's Chrome)
+        canary_path = "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary"
+        if os.path.exists(canary_path):
+            chrome_path = canary_path
+            data_dir = os.path.join(os.path.expanduser("~"), ".tars_canary_profile")
+        else:
+            chrome_path = CHROME_PATH
+            data_dir = os.path.join(os.path.expanduser("~"), ".tars_chrome_profile")
+
         os.makedirs(data_dir, exist_ok=True)
 
         # Check if Chrome already running without debug port — restart it
-        try:
-            existing = subprocess.run(
-                ["pgrep", "-f", "Google Chrome"],
-                capture_output=True, text=True, timeout=3
-            )
-            if existing.stdout.strip():
-                # Chrome is running — try to quit gracefully and relaunch
-                subprocess.run(
-                    ["osascript", "-e", 'tell application "Google Chrome" to quit'],
-                    capture_output=True, timeout=5
+        # Only restart regular Chrome (not Canary — Canary is always ours)
+        if chrome_path == CHROME_PATH:
+            try:
+                existing = subprocess.run(
+                    ["pgrep", "-f", "Google Chrome"],
+                    capture_output=True, text=True, timeout=3
                 )
-                time.sleep(3)
+                if existing.stdout.strip():
+                    # Chrome is running — try to quit gracefully and relaunch
+                    subprocess.run(
+                        ["osascript", "-e", 'tell application "Google Chrome" to quit'],
+                        capture_output=True, timeout=5
+                    )
+                    time.sleep(3)
+            except Exception:
+                pass
+
+        # Build launch command
+        cmd = [
+            chrome_path,
+            f"--remote-debugging-port={self.port}",
+            f"--user-data-dir={data_dir}",
+            "--remote-allow-origins=*",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ]
+
+        # Position on TARS screen if environment module has detected it
+        try:
+            from hands.environment import detect_displays, assign_screens
+            displays = detect_displays()
+            if len(displays) >= 2:
+                screen_map = assign_screens(displays)
+                tars_screen = screen_map.get("tars", {})
+                if tars_screen:
+                    sx = tars_screen.get("x", 0)
+                    sy = tars_screen.get("y", 0)
+                    sw = tars_screen.get("width", 1920)
+                    sh = tars_screen.get("height", 1080)
+                    cmd.extend([f"--window-position={sx},{sy + 25}", f"--window-size={sw},{sh - 25}"])
         except Exception:
-            pass
+            pass  # Environment module not available — launch without positioning
 
         self._chrome_proc = subprocess.Popen(
-            [
-                CHROME_PATH,
-                f"--remote-debugging-port={self.port}",
-                f"--user-data-dir={data_dir}",
-                "--remote-allow-origins=*",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ],
+            cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -218,8 +246,25 @@ class CDP:
 
         raise TimeoutError(f"CDP timeout after {timeout}s: {method}")
 
+    def _cleanup_stale_responses(self, max_age=120):
+        """Remove response entries older than max_age seconds.
+        
+        Called periodically to prevent _responses from growing unbounded
+        when CDP commands time out (the late response arrives but is never read).
+        """
+        # _responses only stores {id: response_dict} — no timestamps.
+        # But we can cap the total size as a proxy: if there are too many
+        # orphaned entries, the oldest IDs are from long-ago commands.
+        with self._lock:
+            if len(self._responses) > 50:
+                # Keep only the 20 most recent (highest IDs)
+                sorted_ids = sorted(self._responses.keys())
+                for old_id in sorted_ids[:-20]:
+                    del self._responses[old_id]
+
     def _recv_loop(self):
         """Background thread: read websocket messages."""
+        cleanup_counter = 0
         while self._running and self._ws:
             try:
                 raw = self._ws.recv()
@@ -240,6 +285,11 @@ class CDP:
                         # Cap buffer size
                         if len(self._event_queues[method]) > 100:
                             self._event_queues[method] = self._event_queues[method][-50:]
+                # Periodic cleanup of orphaned responses
+                cleanup_counter += 1
+                if cleanup_counter >= 200:
+                    cleanup_counter = 0
+                    self._cleanup_stale_responses()
             except websocket.WebSocketTimeoutException:
                 continue
             except websocket.WebSocketConnectionClosedException:

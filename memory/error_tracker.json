@@ -1,176 +1,958 @@
 {
-  "deploy_browser_agent:Connection refused to port <NUM>": {
-    "signature": "Connection refused to port <NUM>",
+  "deploy_browser_agent:No verification email found within 90s. Check Mail app manually.": {
+    "signature": "No verification email found within 90s. Check Mail app manually.",
     "context": "deploy_browser_agent",
-    "raw_error": "Connection refused to port 8080",
+    "raw_error": "\u274c browser agent FAILED after 7 steps.\nReason: No verification email found within 90s. Check Mail app manually.\n\n## Recovery: LEVEL 1 \u2014 SAME AGENT, BETTER INSTRUCTIONS\nAnalyze WHY the agent failed. The most likely cause: instructions were incomplete or ambiguous. Redeploy the SAME agent with MORE SPECIFIC instructions \u2014 include exact CSS selectors, exact text to look for, explicit wait times, and clearer success criteria.\n\n## \u26a0\ufe0f PREVIOUS FAILED ATTEMPTS THIS TASK:\n  1. [browser] task='Go to https",
     "tool": "deploy_browser_agent",
     "agent": "browser",
-    "details": "task: search for flights",
-    "count": 2,
-    "first_seen": "2026-02-16T12:00:38.444763",
-    "last_seen": "2026-02-16T12:00:38.444977",
+    "details": "Go to https://www.instagram.com/accounts/emailsignup/.\nType tarsitgroup@outlook.com into the field with aria-label 'Mobile number or email'.\nType Tars Bot into the field with aria-label 'Full Name'.\nT",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "Agent hit the step limit or was caught in a loop. Check agents/base_agent.py for loop detection thresholds and the agent's system prompt for better termination instructions.",
+    "fix_hint_files": [
+      "agents/base_agent.py"
+    ],
+    "sample_params": [],
+    "count": 3,
+    "first_seen": "2026-02-17T19:47:26.875233",
+    "last_seen": "2026-02-17T19:47:26.877086",
     "fixes": [
       {
-        "fix": "Restart Chrome or check if CDP is running on correct port",
-        "source": "manual",
-        "success": false,
-        "confidence": 0.6000000000000001,
-        "applied_at": "2026-02-16T12:00:38.444801"
+        "fix": "Fixed in code: Added read_otp tool directly to browser agent (both main and standalone). Agent can now call read_otp(subject_contains='Instagram') to fetch verification codes from email without needing brain intervention.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394612"
       }
     ],
-    "auto_fixable": false,
-    "fixed_count": 1
-  },
-  "run_quick_command:[stderr]: awk: calling undefined function strftime\n input record number 1, file \n source line number 1": {
-    "signature": "[stderr]: awk: calling undefined function strftime\n input record number 1, file \n source line number 1",
-    "context": "run_quick_command",
-    "raw_error": "[stderr]: awk: calling undefined function strftime\n input record number 1, file \n source line number 1",
-    "tool": "run_quick_command",
-    "agent": "",
-    "details": "{'command': '\\n{\\n  echo \"Most Recently Modified Files in Downloads:\"\\n  find ~/Downloads -type f -print0 | xargs -0 stat -f \"%m %N %z\" | sort -rn | head -n 5 | awk \\'{print strftime(\"%Y-%m-%d %H:%M:%",
-    "count": 1,
-    "first_seen": "2026-02-16T12:56:05.569968",
-    "last_seen": "2026-02-16T12:56:05.569969",
-    "fixes": [],
-    "auto_fixable": false,
+    "auto_fixable": true,
     "fixed_count": 0
   },
-  "run_quick_command:[stderr]:   File \"<PATH>\", line 30\n    f.write(f'Fibonacci number: {result[0]}\n                                           ^\nSyntaxError: EOL while scanning string literal": {
-    "signature": "[stderr]:   File \"<PATH>\", line 30\n    f.write(f'Fibonacci number: {result[0]}\n                                           ^\nSyntaxError: EOL while scanning string literal",
-    "context": "run_quick_command",
-    "raw_error": "[stderr]:   File \"/Users/abdullah/Desktop/parallel_test_3_fibonacci.py\", line 30\n    f.write(f'Fibonacci number: {result[0]}\n                                           ^\nSyntaxError: EOL while scanning string literal",
-    "tool": "run_quick_command",
-    "agent": "",
-    "details": "{'command': 'python3 /Users/abdullah/Desktop/parallel_test_3_fibonacci.py'}",
-    "count": 4,
-    "first_seen": "2026-02-16T12:56:19.796351",
-    "last_seen": "2026-02-16T12:56:41.593767",
-    "fixes": [],
-    "auto_fixable": false,
+  "deploy_browser_agent:Unable to complete the task due to form errors and lack of visible elements for clicking and typing.": {
+    "signature": "Unable to complete the task due to form errors and lack of visible elements for clicking and typing.",
+    "context": "deploy_browser_agent",
+    "raw_error": "\u274c browser agent FAILED after 32 steps.\nReason: Unable to complete the task due to form errors and lack of visible elements for clicking and typing.\n\n## Recovery: LEVEL 2 \u2014 SAME AGENT, DIFFERENT APPROACH\nThe same approach failed twice. Try a COMPLETELY DIFFERENT strategy: different URL, different navigation path, different form-filling order, or break the task into smaller micro-steps (do ONLY step 1, verify, then step 2).\n\n## \u26a0\ufe0f PREVIOUS FAILED ATTEMPTS THIS TASK:\n  1. [browser] task='Go to http",
+    "tool": "deploy_browser_agent",
+    "agent": "browser",
+    "details": "Go to https://www.instagram.com/accounts/emailsignup/.\nType tarsitgroup@outlook.com into the field with aria-label 'Mobile number or email'.\nType Tars Bot into the field with aria-label 'Full Name'.\nT",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "Browser agent couldn't interact with a page element. Possible causes: wrong CSS selector, element not visible, page didn't load, or anti-bot detection. Check browser.py action functions and the agent's system prompt for better selectors/wait strategies.",
+    "fix_hint_files": [
+      "hands/browser.py",
+      "agents/browser_agent.py",
+      "hands/browser_agent.py"
+    ],
+    "sample_params": [],
+    "count": 3,
+    "first_seen": "2026-02-17T19:48:30.820697",
+    "last_seen": "2026-02-17T19:48:30.821878",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Added form error recovery playbooks (_FORM_ERROR_PLAYBOOKS), human-like typing (_cdp_type_human), click verification, and form error detection in act_inspect_page(). Also fixed done() continue bug that swallowed successful completions.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394308"
+      }
+    ],
+    "auto_fixable": true,
     "fixed_count": 0
   },
-  "verify_result:\u274c NOT VERIFIED \u2014 Path does not exist: <PATH>": {
-    "signature": "\u274c NOT VERIFIED \u2014 Path does not exist: <PATH>",
-    "context": "verify_result",
-    "raw_error": "\u274c NOT VERIFIED \u2014 Path does not exist: /Users/abdullah/Desktop/parallel_test_3_fibonacci.txt",
-    "tool": "verify_result",
+  "headless_browse:Scrape error: Cannot switch to a different thread\n\tCurrent:  <greenlet.greenlet object at <HEX> (otid=<HEX>) current active started main>\n\tExpected: <greenlet.greenlet object at <HEX> (otid=<HEX>) sus": {
+    "signature": "Scrape error: Cannot switch to a different thread\n\tCurrent:  <greenlet.greenlet object at <HEX> (otid=<HEX>) current active started main>\n\tExpected: <greenlet.greenlet object at <HEX> (otid=<HEX>) sus",
+    "context": "headless_browse",
+    "raw_error": "Scrape error: Cannot switch to a different thread\n\tCurrent:  <greenlet.greenlet object at 0x10c3ea380 (otid=0x10c3b8780) current active started main>\n\tExpected: <greenlet.greenlet object at 0x10b726640 (otid=0x10c4e7300) suspended active started main>",
+    "tool": "headless_browse",
     "agent": "",
-    "details": "{'check': '~/Desktop/parallel_test_3_fibonacci.txt', 'type': 'file', 'expected': 'Fibonacci number: 0'}",
+    "details": "{'action': 'scrape', 'url': 'https://www.instagram.com/accounts/emailsignup/'}",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [],
     "count": 2,
-    "first_seen": "2026-02-16T12:56:29.546162",
-    "last_seen": "2026-02-16T12:56:41.595050",
-    "fixes": [],
-    "auto_fixable": false,
+    "first_seen": "2026-02-17T19:49:08.346315",
+    "last_seen": "2026-02-17T19:49:08.346364",
+    "fixes": [
+      {
+        "fix": "Known playwright/greenlet threading issue. Use deploy_browser_agent (CDP-based) instead of headless_browse for multi-threaded scenarios.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:44.110719"
+      }
+    ],
+    "auto_fixable": true,
     "fixed_count": 0
   },
-  "run_quick_command:[stderr]: Traceback (most recent call last):\n  File \"<PATH>\", line 22, in <module>\n    ratio = fibonacci_numbers[i] / fibonacci_numbers[i-1]\nZeroDivisionError: division by zero": {
-    "signature": "[stderr]: Traceback (most recent call last):\n  File \"<PATH>\", line 22, in <module>\n    ratio = fibonacci_numbers[i] / fibonacci_numbers[i-1]\nZeroDivisionError: division by zero",
-    "context": "run_quick_command",
-    "raw_error": "[stderr]: Traceback (most recent call last):\n  File \"/Users/abdullah/Desktop/parallel_test_3_fibonacci.py\", line 22, in <module>\n    ratio = fibonacci_numbers[i] / fibonacci_numbers[i-1]\nZeroDivisionError: division by zero",
-    "tool": "run_quick_command",
-    "agent": "",
-    "details": "{'command': 'python3 ~/Desktop/parallel_test_3_fibonacci.py'}",
-    "count": 1,
-    "first_seen": "2026-02-16T12:56:46.108741",
-    "last_seen": "2026-02-16T12:56:46.108742",
-    "fixes": [],
-    "auto_fixable": false,
-    "fixed_count": 0
-  },
-  "deploy_browser_agent:Unable to create an account on SVG Genie due to repeated failures of the 'Create Account' button. The page does not progress beyond the sign-up form, and no error messages are provided to indicate the": {
-    "signature": "Unable to create an account on SVG Genie due to repeated failures of the 'Create Account' button. The page does not progress beyond the sign-up form, and no error messages are provided to indicate the",
+  "deploy_browser_agent:The task failed due to form errors and lack of visible elements for clicking and typing. The page showed a form error 'Input Username is valid.' and did not proceed to the next step. The task was unab": {
+    "signature": "The task failed due to form errors and lack of visible elements for clicking and typing. The page showed a form error 'Input Username is valid.' and did not proceed to the next step. The task was unab",
     "context": "deploy_browser_agent",
-    "raw_error": "Unable to create an account on SVG Genie due to repeated failures of the 'Create Account' button. The page does not progress beyond the sign-up form, and no error messages are provided to indicate the cause of the issue.",
+    "raw_error": "\u274c browser agent FAILED after 25 steps.\nReason: The task failed due to form errors and lack of visible elements for clicking and typing. The page showed a form error 'Input Username is valid.' and did not proceed to the next step. The task was unable to complete the signup process.\n\n## Recovery: LEVEL 1 \u2014 SAME AGENT, BETTER INSTRUCTIONS\nAnalyze WHY the agent failed. The most likely cause: instructions were incomplete or ambiguous. Redeploy the SAME agent with MORE SPECIFIC instructions \u2014 include ",
     "tool": "deploy_browser_agent",
     "agent": "browser",
-    "details": "Navigate to https://www.svggenie.com. Look for a text input field to describe the logo. Type 'TARS logo, professional, classy, tech, robotic, minimal' into the description field. Click the button to g",
-    "count": 1,
-    "first_seen": "2026-02-16T14:53:10.081525",
-    "last_seen": "2026-02-16T14:53:10.081528",
-    "fixes": [],
-    "auto_fixable": false,
+    "details": "Go to https://www.instagram.com/accounts/emailsignup/.\nType tarsitgroup@outlook.com into the input field that has the placeholder 'Mobile number or email'.\nType Tars Bot into the input field that has ",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "Browser agent couldn't interact with a page element. Possible causes: wrong CSS selector, element not visible, page didn't load, or anti-bot detection. Check browser.py action functions and the agent's system prompt for better selectors/wait strategies.",
+    "fix_hint_files": [
+      "hands/browser.py",
+      "agents/browser_agent.py",
+      "hands/browser_agent.py"
+    ],
+    "sample_params": [],
+    "count": 3,
+    "first_seen": "2026-02-17T19:49:41.276955",
+    "last_seen": "2026-02-17T19:49:41.279342",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Added form error recovery playbooks (_FORM_ERROR_PLAYBOOKS), human-like typing (_cdp_type_human), click verification, and form error detection in act_inspect_page(). Also fixed done() continue bug that swallowed successful completions.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394314"
+      }
+    ],
+    "auto_fixable": true,
     "fixed_count": 0
   },
-  "deploy_browser_agent:\u274c browser agent FAILED after 28 steps.\nReason: Unable to create an account on SVG Genie due to repeated failures of the 'Create Account' button. The page does not progress beyond the sign-up form, and": {
-    "signature": "\u274c browser agent FAILED after 28 steps.\nReason: Unable to create an account on SVG Genie due to repeated failures of the 'Create Account' button. The page does not progress beyond the sign-up form, and",
+  "deploy_browser_agent:The task failed due to form errors and lack of visible elements for clicking and typing. The page showed a form error 'Input Username is valid.' and did not proceed to the next step.": {
+    "signature": "The task failed due to form errors and lack of visible elements for clicking and typing. The page showed a form error 'Input Username is valid.' and did not proceed to the next step.",
     "context": "deploy_browser_agent",
-    "raw_error": "\u274c browser agent FAILED after 28 steps.\nReason: Unable to create an account on SVG Genie due to repeated failures of the 'Create Account' button. The page does not progress beyond the sign-up form, and no error messages are provided to indicate the cause of the issue.\n\n## Recovery: LEVEL 1 \u2014 SAME AGENT, BETTER INSTRUCTIONS\nAnalyze WHY the agent failed. The most likely cause: instructions were incomplete or ambiguous. Redeploy the SAME agent with MORE SPECIFIC instructions \u2014 include exact CSS sele",
-    "tool": "deploy_browser_agent",
-    "agent": "",
-    "details": "{'task': \"Navigate to https://www.svggenie.com. Look for a text input field to describe the logo. Type 'TARS logo, professional, classy, tech, robotic, minimal' into the description field. Click the b",
-    "count": 1,
-    "first_seen": "2026-02-16T14:53:10.082646",
-    "last_seen": "2026-02-16T14:53:10.082649",
-    "fixes": [],
-    "auto_fixable": false,
-    "fixed_count": 0
-  },
-  "deploy_browser_agent:\u274c browser agent FAILED after 28 steps.\nReason: Unable to create an account on SVG Genie due to repeated failures of the 'Create Account'<LONG_STR>'Navigate to https:<PATH> Look for a text input field": {
-    "signature": "\u274c browser agent FAILED after 28 steps.\nReason: Unable to create an account on SVG Genie due to repeated failures of the 'Create Account'<LONG_STR>'Navigate to https:<PATH> Look for a text input field",
-    "context": "deploy_browser_agent",
-    "raw_error": "\u274c browser agent FAILED after 28 steps.\nReason: Unable to create an account on SVG Genie due to repeated failures of the 'Create Account' button. The page does not progress beyond the sign-up form, and no error messages are provided to indicate the cause of the issue.\n\n## Recovery: LEVEL 1 \u2014 SAME AGENT, BETTER INSTRUCTIONS\nAnalyze WHY the agent failed. The most likely cause: instructions were incomplete or ambiguous. Redeploy the SAME agent with MORE SPECIFIC instructions \u2014 include exact CSS sele",
-    "tool": "deploy_browser_agent",
-    "agent": "",
-    "details": "{'task': \"Navigate to https://www.svggenie.com. Look for a text input field to describe the logo. Type 'TARS logo, professional, classy, tech, robotic, minimal' into the description field. Click the b",
-    "count": 1,
-    "first_seen": "2026-02-16T14:53:10.082747",
-    "last_seen": "2026-02-16T14:53:10.082749",
-    "fixes": [],
-    "auto_fixable": false,
-    "fixed_count": 0
-  },
-  "deploy_browser_agent:Unable to download SVG files after clicking the 'Download' button multiple times. The page does not provide any error messages or indications of why the download is failing.": {
-    "signature": "Unable to download SVG files after clicking the 'Download' button multiple times. The page does not provide any error messages or indications of why the download is failing.",
-    "context": "deploy_browser_agent",
-    "raw_error": "Unable to download SVG files after clicking the 'Download' button multiple times. The page does not provide any error messages or indications of why the download is failing.",
+    "raw_error": "\u274c browser agent FAILED after 17 steps.\nReason: The task failed due to form errors and lack of visible elements for clicking and typing. The page showed a form error 'Input Username is valid.' and did not proceed to the next step.\n\n## Recovery: LEVEL 2 \u2014 SAME AGENT, DIFFERENT APPROACH\nThe same approach failed twice. Try a COMPLETELY DIFFERENT strategy: different URL, different navigation path, different form-filling order, or break the task into smaller micro-steps (do ONLY step 1, verify, then s",
     "tool": "deploy_browser_agent",
     "agent": "browser",
-    "details": "Navigate to https://svggenerator.com. Look for a text input field to describe the logo. Type 'TARS logo, professional, classy, tech, robotic, minimal' into the description field. Click the button to g",
-    "count": 1,
-    "first_seen": "2026-02-16T14:53:37.394849",
-    "last_seen": "2026-02-16T14:53:37.394853",
-    "fixes": [],
-    "auto_fixable": false,
+    "details": "Go to https://www.instagram.com/accounts/emailsignup/.\nType tarsitgroup@outlook.com into the input field that has the placeholder 'Mobile number or email'.\nType Tars Bot into the input field that has ",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "Browser agent couldn't interact with a page element. Possible causes: wrong CSS selector, element not visible, page didn't load, or anti-bot detection. Check browser.py action functions and the agent's system prompt for better selectors/wait strategies.",
+    "fix_hint_files": [
+      "hands/browser.py",
+      "agents/browser_agent.py",
+      "hands/browser_agent.py"
+    ],
+    "sample_params": [],
+    "count": 6,
+    "first_seen": "2026-02-17T19:51:00.655104",
+    "last_seen": "2026-02-17T19:52:40.696255",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Added form error recovery playbooks (_FORM_ERROR_PLAYBOOKS), human-like typing (_cdp_type_human), click verification, and form error detection in act_inspect_page(). Also fixed done() continue bug that swallowed successful completions.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394318"
+      }
+    ],
+    "auto_fixable": true,
     "fixed_count": 0
   },
-  "deploy_browser_agent:\u274c browser agent FAILED after 15 steps.\nReason: Unable to download SVG files after clicking the 'Download' button multiple times. The page does not provide any error messages or indications of why the": {
-    "signature": "\u274c browser agent FAILED after 15 steps.\nReason: Unable to download SVG files after clicking the 'Download' button multiple times. The page does not provide any error messages or indications of why the",
+  "deploy_browser_agent:The login process did not complete successfully. The page still shows the login form after submitting the credentials. No error messages or verification codes were found.": {
+    "signature": "The login process did not complete successfully. The page still shows the login form after submitting the credentials. No error messages or verification codes were found.",
     "context": "deploy_browser_agent",
-    "raw_error": "\u274c browser agent FAILED after 15 steps.\nReason: Unable to download SVG files after clicking the 'Download' button multiple times. The page does not provide any error messages or indications of why the download is failing.\n\n## Recovery: LEVEL 2 \u2014 SAME AGENT, DIFFERENT APPROACH\nThe same approach failed twice. Try a COMPLETELY DIFFERENT strategy: different URL, different navigation path, different form-filling order, or break the task into smaller micro-steps (do ONLY step 1, verify, then step 2).\n\n",
+    "raw_error": "\u274c browser agent FAILED after 13 steps.\nReason: The login process did not complete successfully. The page still shows the login form after submitting the credentials. No error messages or verification codes were found.\n\n## Recovery: LEVEL 1 \u2014 SAME AGENT, BETTER INSTRUCTIONS\nAnalyze WHY the agent failed. The most likely cause: instructions were incomplete or ambiguous. Redeploy the SAME agent with MORE SPECIFIC instructions \u2014 include exact CSS selectors, exact text to look for, explicit wait times",
     "tool": "deploy_browser_agent",
-    "agent": "",
-    "details": "{'task': \"Navigate to https://svggenerator.com. Look for a text input field to describe the logo. Type 'TARS logo, professional, classy, tech, robotic, minimal' into the description field. Click the b",
-    "count": 1,
-    "first_seen": "2026-02-16T14:53:37.395886",
-    "last_seen": "2026-02-16T14:53:37.395889",
-    "fixes": [],
-    "auto_fixable": false,
+    "agent": "browser",
+    "details": "Go to https://www.instagram.com/accounts/login/.\nType 'tarsitgroup@outlook.com' into the field with aria-label 'Phone number, username, or email'.\nType 'TarsPass123!' into the password field.\nClick 'L",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "Browser agent couldn't interact with a page element. Possible causes: wrong CSS selector, element not visible, page didn't load, or anti-bot detection. Check browser.py action functions and the agent's system prompt for better selectors/wait strategies.",
+    "fix_hint_files": [
+      "hands/browser.py",
+      "agents/browser_agent.py",
+      "hands/browser_agent.py"
+    ],
+    "sample_params": [],
+    "count": 12,
+    "first_seen": "2026-02-17T19:54:57.214645",
+    "last_seen": "2026-02-17T19:58:39.376813",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Added human-like typing (char-by-char with variable delays), Bezier mouse movements, click jitter, smart_wait for navigation detection, and anti-detection improvements. Also fixed done() continue bug.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394445"
+      }
+    ],
+    "auto_fixable": true,
     "fixed_count": 0
   },
-  "deploy_browser_agent:\u274c browser agent FAILED after 15 steps.\nReason: Unable to download SVG files after clicking the 'Download'<LONG_STR>'Navigate to https:<PATH> Look for a text input field to describe the logo. Type 'TAR": {
-    "signature": "\u274c browser agent FAILED after 15 steps.\nReason: Unable to download SVG files after clicking the 'Download'<LONG_STR>'Navigate to https:<PATH> Look for a text input field to describe the logo. Type 'TAR",
+  "deploy_browser_agent:The login process did not complete successfully. The page still shows the login form after submitting the credentials.": {
+    "signature": "The login process did not complete successfully. The page still shows the login form after submitting the credentials.",
     "context": "deploy_browser_agent",
-    "raw_error": "\u274c browser agent FAILED after 15 steps.\nReason: Unable to download SVG files after clicking the 'Download' button multiple times. The page does not provide any error messages or indications of why the download is failing.\n\n## Recovery: LEVEL 2 \u2014 SAME AGENT, DIFFERENT APPROACH\nThe same approach failed twice. Try a COMPLETELY DIFFERENT strategy: different URL, different navigation path, different form-filling order, or break the task into smaller micro-steps (do ONLY step 1, verify, then step 2).\n\n",
+    "raw_error": "\u274c browser agent FAILED after 9 steps.\nReason: The login process did not complete successfully. The page still shows the login form after submitting the credentials.\n\n## Recovery: LEVEL 1 \u2014 SAME AGENT, BETTER INSTRUCTIONS\nAnalyze WHY the agent failed. The most likely cause: instructions were incomplete or ambiguous. Redeploy the SAME agent with MORE SPECIFIC instructions \u2014 include exact CSS selectors, exact text to look for, explicit wait times, and clearer success criteria.\n\n## \u26a0\ufe0f PREVIOUS FAILE",
     "tool": "deploy_browser_agent",
-    "agent": "",
-    "details": "{'task': \"Navigate to https://svggenerator.com. Look for a text input field to describe the logo. Type 'TARS logo, professional, classy, tech, robotic, minimal' into the description field. Click the b",
-    "count": 1,
-    "first_seen": "2026-02-16T14:53:37.395985",
-    "last_seen": "2026-02-16T14:53:37.395987",
-    "fixes": [],
-    "auto_fixable": false,
+    "agent": "browser",
+    "details": "Go to https://www.instagram.com/accounts/login/. Type 'tars_r6ypl' into the input field with name 'username'. Type 'TarsPass123!' into the input field with name 'password'. Click the button with the t",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "Browser agent couldn't interact with a page element. Possible causes: wrong CSS selector, element not visible, page didn't load, or anti-bot detection. Check browser.py action functions and the agent's system prompt for better selectors/wait strategies.",
+    "fix_hint_files": [
+      "hands/browser.py",
+      "agents/browser_agent.py",
+      "hands/browser_agent.py"
+    ],
+    "sample_params": [],
+    "count": 3,
+    "first_seen": "2026-02-17T19:56:15.344978",
+    "last_seen": "2026-02-17T19:56:15.345652",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Added human-like typing (char-by-char with variable delays), Bezier mouse movements, click jitter, smart_wait for navigation detection, and anti-detection improvements. Also fixed done() continue bug.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394447"
+      }
+    ],
+    "auto_fixable": true,
     "fixed_count": 0
   },
-  "mac_mail:No sent email matching 'TARS Logo Designs (SVG)' found in any account": {
-    "signature": "No sent email matching 'TARS Logo Designs (SVG)' found in any account",
+  "deploy_browser_agent:The task failed due to form errors and lack of visible elements for clicking and typing. The page showed a form error 'Input Username is valid.' and the 'Sign up' button did not work as expected.": {
+    "signature": "The task failed due to form errors and lack of visible elements for clicking and typing. The page showed a form error 'Input Username is valid.' and the 'Sign up' button did not work as expected.",
+    "context": "deploy_browser_agent",
+    "raw_error": "\u274c browser agent FAILED after 23 steps.\nReason: The task failed due to form errors and lack of visible elements for clicking and typing. The page showed a form error 'Input Username is valid.' and the 'Sign up' button did not work as expected.\n\n## Recovery: LEVEL 4+ \u2014 ASK ABDULLAH\nMultiple failures across approaches. Ask Abdullah for help via send_imessage with a SPECIFIC question: what exactly is failing, what you've tried, and what information you need to proceed.\n\n## \u26a0\ufe0f PREVIOUS FAILED ATTEMPT",
+    "tool": "deploy_browser_agent",
+    "agent": "browser",
+    "details": "Go to https://www.instagram.com/accounts/emailsignup/. Type 'tarsitgroup@outlook.com' into the input field with name 'emailOrPhone'. Click the 'Next' button. Then, fill in the 'Full Name' with 'TARS B",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "Browser agent couldn't interact with a page element. Possible causes: wrong CSS selector, element not visible, page didn't load, or anti-bot detection. Check browser.py action functions and the agent's system prompt for better selectors/wait strategies.",
+    "fix_hint_files": [
+      "hands/browser.py",
+      "agents/browser_agent.py",
+      "hands/browser_agent.py"
+    ],
+    "sample_params": [],
+    "count": 6,
+    "first_seen": "2026-02-17T19:57:22.148396",
+    "last_seen": "2026-02-17T19:57:51.046754",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Added form error recovery playbooks (_FORM_ERROR_PLAYBOOKS), human-like typing (_cdp_type_human), click verification, and form error detection in act_inspect_page(). Also fixed done() continue bug that swallowed successful completions.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394341"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "deploy_browser_agent:The task failed because the confirmation message 'We'<LONG_STR>' did not appear after clicking the 'Send Login Link' button multiple times. The page remained the same, and no email was sent.": {
+    "signature": "The task failed because the confirmation message 'We'<LONG_STR>' did not appear after clicking the 'Send Login Link' button multiple times. The page remained the same, and no email was sent.",
+    "context": "deploy_browser_agent",
+    "raw_error": "\u274c browser agent FAILED after 20 steps.\nReason: The task failed because the confirmation message 'We've sent you an email with a link to reset your password.' did not appear after clicking the 'Send Login Link' button multiple times. The page remained the same, and no email was sent.\n\n## Recovery: LEVEL 4+ \u2014 ASK ABDULLAH\nMultiple failures across approaches. Ask Abdullah for help via send_imessage with a SPECIFIC question: what exactly is failing, what you've tried, and what information you need t",
+    "tool": "deploy_browser_agent",
+    "agent": "browser",
+    "details": "Go to https://www.instagram.com/accounts/password/reset/. Type 'tarsitgroup@outlook.com' into the input field for email or username. Click the 'Send Login Link' button. If a confirmation message appea",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "Browser agent couldn't interact with a page element. Possible causes: wrong CSS selector, element not visible, page didn't load, or anti-bot detection. Check browser.py action functions and the agent's system prompt for better selectors/wait strategies.",
+    "fix_hint_files": [
+      "hands/browser.py",
+      "agents/browser_agent.py",
+      "hands/browser_agent.py"
+    ],
+    "sample_params": [],
+    "count": 2,
+    "first_seen": "2026-02-17T19:59:47.680159",
+    "last_seen": "2026-02-17T19:59:47.681375",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Added click verification (post-click URL check, DOM mutation detection, inline error scanning), smart_wait with condition detection, and multi-page form handling in browser agent system prompt.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394808"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "deploy_browser_agent:Reached max 40 steps": {
+    "signature": "Reached max 40 steps",
+    "context": "deploy_browser_agent",
+    "raw_error": "\u274c browser agent FAILED after 40 steps.\nReason: Reached max 40 steps\n\n## Recovery: LEVEL 1 \u2014 SAME AGENT, BETTER INSTRUCTIONS\nAnalyze WHY the agent failed. The most likely cause: instructions were incomplete or ambiguous. Redeploy the SAME agent with MORE SPECIFIC instructions \u2014 include exact CSS selectors, exact text to look for, explicit wait times, and clearer success criteria.\n\n## \u26a0\ufe0f PREVIOUS FAILED ATTEMPTS THIS TASK:\n  1. [browser] task='Go to https://www.instagram.com/accounts/emailsignup/.",
+    "tool": "deploy_browser_agent",
+    "agent": "browser",
+    "details": "Go to https://www.instagram.com/accounts/emailsignup/.\nType 'tarsitgroup@outlook.com' into the email field (aria-label 'Mobile number or email').\nType 'Tars Agent' into the full name field (aria-label",
+    "source_file": "executor.py",
+    "traceback": "",
+    "fix_hint": "Agent hit the step limit or was caught in a loop. Check agents/base_agent.py for loop detection thresholds and the agent's system prompt for better termination instructions.",
+    "fix_hint_files": [
+      "agents/base_agent.py"
+    ],
+    "sample_params": [
+      {
+        "task": "Navigate to https://www.pexels.com/. Search for 'abstract geometric art vibrant colors'. Click on the first image result. Right-click the image and select 'Save Image As...' to download it. Save the image to '/tmp/cool_picture.jpeg'. Once the image is downloaded, call done.",
+        "steps": 40
+      },
+      {
+        "task": "Navigate to https://www.pexels.com/. Search for 'abstract geometric art vibrant colors'. Click on the first image result. Right-click the image and select 'Save Image As...' to download it. Save the image to '/tmp/cool_picture.jpeg'. Once the image is downloaded, call done."
+      }
+    ],
+    "count": 18,
+    "first_seen": "2026-02-17T20:48:06.811510",
+    "last_seen": "2026-02-20T23:40:55.837017",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Added observation-only streak detection (6 consecutive look/scroll without action triggers nudge), auto-done for text conclusions (8+ dispatches + conclusion signals \u2192 auto-return), dispatch budget (soft=40, hard=55), and session scratchpad to track attempts/selectors/patterns across steps.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394510"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "deploy_browser_agent:Stuck on signup form. Filled all fields and clicked 'Submit', but the page did not navigate. The URL remains https:<PATH>, and the signup form is still visible. No error messages are explicitly displa": {
+    "signature": "Stuck on signup form. Filled all fields and clicked 'Submit', but the page did not navigate. The URL remains https:<PATH>, and the signup form is still visible. No error messages are explicitly displa",
+    "context": "deploy_browser_agent",
+    "raw_error": "\u274c browser agent FAILED after 14 steps.\nReason: Stuck on signup form. Filled all fields and clicked 'Submit', but the page did not navigate. The URL remains https://www.instagram.com/accounts/emailsignup/, and the signup form is still visible. No error messages are explicitly displayed.\n\n## Recovery: LEVEL 2 \u2014 SAME AGENT, DIFFERENT APPROACH\nThe same approach failed twice. Try a COMPLETELY DIFFERENT strategy: different URL, different navigation path, different form-filling order, or break the task",
+    "tool": "deploy_browser_agent",
+    "agent": "browser",
+    "details": "Go to https://www.instagram.com/accounts/emailsignup/.\nType 'tarsitgroup@outlook.com' into the email field (aria-label=\"Mobile number or email\").\nType 'Tars Agent' into the full name field (aria-label",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "Browser agent couldn't interact with a page element. Possible causes: wrong CSS selector, element not visible, page didn't load, or anti-bot detection. Check browser.py action functions and the agent's system prompt for better selectors/wait strategies.",
+    "fix_hint_files": [
+      "hands/browser.py",
+      "agents/browser_agent.py",
+      "hands/browser_agent.py"
+    ],
+    "sample_params": [],
+    "count": 3,
+    "first_seen": "2026-02-17T20:48:56.869921",
+    "last_seen": "2026-02-17T20:48:56.871860",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Same root cause as form errors \u2014 added form error recovery playbooks, human-like typing, click verification, and done() continue bug fix. The signup form issues were caused by bot detection and the agent not recognizing multi-page flows.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:21.833152"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "deploy_browser_agent:Timed out after 300s": {
+    "signature": "Timed out after 300s",
+    "context": "deploy_browser_agent",
+    "raw_error": "\u274c browser agent FAILED after 0 steps.\nReason: Timed out after 300s\n\n## Recovery: LEVEL 1 \u2014 SAME AGENT, BETTER INSTRUCTIONS\nAnalyze WHY the agent failed. The most likely cause: instructions were incomplete or ambiguous. Redeploy the SAME agent with MORE SPECIFIC instructions \u2014 include exact CSS selectors, exact text to look for, explicit wait times, and clearer success criteria.\n\n## \u26a0\ufe0f PREVIOUS FAILED ATTEMPTS THIS TASK:\n  1. [browser] task='Continue from the current page. Select \"January\" from t",
+    "tool": "deploy_browser_agent",
+    "agent": "browser",
+    "details": "Continue from the current page. Select \"January\" from the month dropdown, \"1\" from the day dropdown, and \"1990\" from the year dropdown. Click the \"Next\" button. Wait for the next page to load, looking",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "Network request failed. Could be transient (retry) or the service is down. Add retry logic with exponential backoff if not already present.",
+    "fix_hint_files": [],
+    "sample_params": [],
+    "count": 7,
+    "first_seen": "2026-02-17T23:09:07.453739",
+    "last_seen": "2026-02-18T19:03:19.134536",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Added smart_wait tool with configurable timeout/conditions, auto-escalation to screen agent on browser failures, and session learning so agents don't repeat failed approaches.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394587"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "deploy_browser_agent:The page is stuck on the signup form after filling all fields and clicking 'Sign up'<LONG_STR>'Enter your birthday' is not present.": {
+    "signature": "The page is stuck on the signup form after filling all fields and clicking 'Sign up'<LONG_STR>'Enter your birthday' is not present.",
+    "context": "deploy_browser_agent",
+    "raw_error": "\u274c browser agent FAILED after 32 steps.\nReason: The page is stuck on the signup form after filling all fields and clicking 'Sign up' multiple times. The page does not advance to the birthday input, and the text 'Enter your birthday' is not present.\n\n## Recovery: LEVEL 3 \u2014 DIFFERENT AGENT\nThree failures with the same agent type. Consider: (1) Use research_agent to find an alternative approach first, (2) Use coder_agent for a scripted approach instead of browser automation, (3) Use system_agent if ",
+    "tool": "deploy_browser_agent",
+    "agent": "browser",
+    "details": "\nGo to https://www.instagram.com/accounts/emailsignup/.\nType \"tarsitgroup@outlook.com\" into the field with aria-label 'Mobile number or email'.\nType \"TARS Agent\" into the field with aria-label 'Full N",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "Browser agent couldn't interact with a page element. Possible causes: wrong CSS selector, element not visible, page didn't load, or anti-bot detection. Check browser.py action functions and the agent's system prompt for better selectors/wait strategies.",
+    "fix_hint_files": [
+      "hands/browser.py",
+      "agents/browser_agent.py",
+      "hands/browser_agent.py"
+    ],
+    "sample_params": [],
+    "count": 3,
+    "first_seen": "2026-02-18T19:07:15.489041",
+    "last_seen": "2026-02-18T19:07:15.491360",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Same root cause as form errors \u2014 added form error recovery playbooks, human-like typing, click verification, and done() continue bug fix. The signup form issues were caused by bot detection and the agent not recognizing multi-page flows.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:21.833168"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "executor:KeyError: 'name' test_unique": {
+    "signature": "KeyError: 'name' test_unique",
+    "context": "executor",
+    "raw_error": "KeyError: 'name' test_unique",
+    "tool": "",
+    "agent": "",
+    "details": "",
+    "source_file": "",
+    "traceback": "",
+    "fix_hint": "A required parameter 'name' is missing from the tool call. Check brain/tools.py schema \u2014 the param may need a default, or the brain prompt needs to specify it. Also check executor.py dispatch for the tool.",
+    "fix_hint_files": [
+      "brain/tools.py",
+      "executor.py"
+    ],
+    "sample_params": [],
+    "count": 9,
+    "first_seen": "2026-02-20T20:02:53.461940",
+    "last_seen": "2026-02-21T22:24:17.645982",
+    "fixes": [
+      {
+        "fix": "Add default value",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.8,
+        "applied_at": "2026-02-21T00:34:27.478212"
+      },
+      {
+        "fix": "Add default value",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.8,
+        "applied_at": "2026-02-21T01:03:49.278122"
+      },
+      {
+        "fix": "Add default value",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.8,
+        "applied_at": "2026-02-21T11:30:00.787510"
+      },
+      {
+        "fix": "Added default value handling for missing parameters in tool dispatch.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394920"
+      },
+      {
+        "fix": "Add default value",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.8,
+        "applied_at": "2026-02-21T22:24:17.646010"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 8
+  },
+  "agent_Email Agent:Agent stuck: I am unable to find Abdullah's email address. I have tried looking it up in your contacts using `email_contact_lookup` which returned an error, and I do not have access to `web_search` or": {
+    "signature": "Agent stuck: I am unable to find Abdullah's email address. I have tried looking it up in your contacts using `email_contact_lookup` which returned an error, and I do not have access to `web_search` or",
+    "context": "agent_Email Agent",
+    "raw_error": "Agent stuck: I am unable to find Abdullah's email address. I have tried looking it up in your contacts using `email_contact_lookup` which returned an error, and I do not have access to `web_search` or `wiki_search`. I cannot send the file without a recipient email address.",
+    "tool": "stuck",
+    "agent": "Email Agent",
+    "details": "Agent called stuck() at step 6",
+    "source_file": "agents/base_agent.py",
+    "traceback": "",
+    "fix_hint": "Email sending failed. Check hands/email.py for Mail.app AppleScript issues, SMTP config, or Exchange/IMAP delays. For attachments, the compose window needs visible:true and a delay before send.",
+    "fix_hint_files": [
+      "hands/email.py",
+      "hands/mac_control.py"
+    ],
+    "sample_params": [
+      {
+        "agent": "Email Agent",
+        "step": 6,
+        "task": "send the file tiny.txt to Abdullah",
+        "reason": "I am unable to find Abdullah's email address. I have tried looking it up in your contacts using `email_contact_lookup` which returned an error, and I do not have access to `web_search` or `wiki_search`. I cannot send the file without a recipient email address."
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-20T23:20:00.148433",
+    "last_seen": "2026-02-20T23:20:00.148447",
+    "fixes": [
+      {
+        "fix": "Agent behavior issue: Email agent should use config email (tarsitgroup@outlook.com) as default recipient when user's email isn't in contacts. Brain prompt should specify the recipient email explicitly in the task description.",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:21.833335"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "deploy_email_agent:I am unable to find Abdullah's email address. I have tried looking it up in your contacts using `email_contact_lookup` which returned an error, and I do not have access to `web_search` or `wiki_search": {
+    "signature": "I am unable to find Abdullah's email address. I have tried looking it up in your contacts using `email_contact_lookup` which returned an error, and I do not have access to `web_search` or `wiki_search",
+    "context": "deploy_email_agent",
+    "raw_error": "I am unable to find Abdullah's email address. I have tried looking it up in your contacts using `email_contact_lookup` which returned an error, and I do not have access to `web_search` or `wiki_search`. I cannot send the file without a recipient email address.",
+    "tool": "deploy_email_agent",
+    "agent": "email",
+    "details": "deploy_email_agent task=\"send the file tiny.txt to Abdullah\" \u2192 \u274c email agent FAILED after 6 steps.",
+    "source_file": "executor.py",
+    "traceback": "",
+    "fix_hint": "Email sending failed. Check hands/email.py for Mail.app AppleScript issues, SMTP config, or Exchange/IMAP delays. For attachments, the compose window needs visible:true and a delay before send.",
+    "fix_hint_files": [
+      "hands/email.py",
+      "hands/mac_control.py"
+    ],
+    "sample_params": [
+      {
+        "task": "send the file tiny.txt to Abdullah",
+        "steps": 6
+      },
+      {
+        "task": "send the file tiny.txt to Abdullah",
+        "subject": "File from TARS: tiny.txt",
+        "account_email": "tarsitgroup@outlook.com",
+        "email_to": "tarsitgroup@outlook.com",
+        "body": "Abdullah, \n\nHere is the file you requested. \n\nRegards, \nTARS\n\nFile Content:\n```\ntest\n```"
+      }
+    ],
+    "count": 2,
+    "first_seen": "2026-02-20T23:20:00.274876",
+    "last_seen": "2026-02-20T23:20:00.276455",
+    "fixes": [
+      {
+        "fix": "Agent behavior issue: Email agent should use config email (tarsitgroup@outlook.com) as default recipient when user's email isn't in contacts. Brain prompt should specify the recipient email explicitly in the task description.",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:21.833337"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "mac_mail:Unknown mail action: send_email": {
+    "signature": "Unknown mail action: send_email",
     "context": "mac_mail",
-    "raw_error": "No sent email matching 'TARS Logo Designs (SVG)' found in any account",
+    "raw_error": "Unknown mail action: send_email",
     "tool": "mac_mail",
     "agent": "",
-    "details": "{'action': 'verify_sent', 'subject': 'TARS Logo Designs (SVG)'}",
-    "count": 4,
-    "first_seen": "2026-02-16T14:54:06.532283",
-    "last_seen": "2026-02-16T14:54:09.013455",
+    "details": "mac_mail recipient=\"tarsitgroup@outlook.com\" \u2192 Unknown mail action: send_email",
+    "source_file": "brain/planner.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "subject": "File from TARS: tiny.txt",
+        "attachments": "['/tmp/tiny.txt']",
+        "recipient": "tarsitgroup@outlook.com",
+        "body": "Here's that file, Abdullah. It seems iMessage is being a bit difficult today, so I've sent it via email as a fallback. Let me know if you need anything else.",
+        "action": "send_email"
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-20T23:20:01.836611",
+    "last_seen": "2026-02-20T23:20:01.836614",
+    "fixes": [
+      {
+        "fix": "The correct action name is 'send' not 'send_email'. The brain should use the correct action name from the tool schema. Alternatively, the mail handler should accept 'send_email' as an alias for 'send'.",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:21.833711"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "agent_Email Agent:Agent stuck: I cannot find Abdullah'<LONG_STR>'s email address to send the file.": {
+    "signature": "Agent stuck: I cannot find Abdullah'<LONG_STR>'s email address to send the file.",
+    "context": "agent_Email Agent",
+    "raw_error": "Agent stuck: I cannot find Abdullah's email address. My previous attempt to use `email_contact_lookup` failed, and I do not have access to `web_search` or `wiki_search` as suggested. I need Abdullah's email address to send the file.",
+    "tool": "stuck",
+    "agent": "Email Agent",
+    "details": "Agent called stuck() at step 2",
+    "source_file": "agents/base_agent.py",
+    "traceback": "",
+    "fix_hint": "Email sending failed. Check hands/email.py for Mail.app AppleScript issues, SMTP config, or Exchange/IMAP delays. For attachments, the compose window needs visible:true and a delay before send.",
+    "fix_hint_files": [
+      "hands/email.py",
+      "hands/mac_control.py"
+    ],
+    "sample_params": [
+      {
+        "agent": "Email Agent",
+        "step": 2,
+        "task": "send the file tiny.txt to Abdullah",
+        "reason": "I cannot find Abdullah's email address. My previous attempt to use `email_contact_lookup` failed, and I do not have access to `web_search` or `wiki_search` as suggested. I need Abdullah's email address to send the file."
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-20T23:20:29.087163",
+    "last_seen": "2026-02-20T23:20:29.087183",
+    "fixes": [
+      {
+        "fix": "Agent behavior issue: Email agent should use config email (tarsitgroup@outlook.com) as default recipient when user's email isn't in contacts. Brain prompt should specify the recipient email explicitly in the task description.",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:21.833339"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "deploy_email_agent:I cannot find Abdullah'<LONG_STR>'s email address to send the file.": {
+    "signature": "I cannot find Abdullah'<LONG_STR>'s email address to send the file.",
+    "context": "deploy_email_agent",
+    "raw_error": "I cannot find Abdullah's email address. My previous attempt to use `email_contact_lookup` failed, and I do not have access to `web_search` or `wiki_search` as suggested. I need Abdullah's email address to send the file.",
+    "tool": "deploy_email_agent",
+    "agent": "email",
+    "details": "deploy_email_agent task=\"send the file tiny.txt to Abdullah\" \u2192 \u274c email agent FAILED after 2 steps.",
+    "source_file": "executor.py",
+    "traceback": "",
+    "fix_hint": "Email sending failed. Check hands/email.py for Mail.app AppleScript issues, SMTP config, or Exchange/IMAP delays. For attachments, the compose window needs visible:true and a delay before send.",
+    "fix_hint_files": [
+      "hands/email.py",
+      "hands/mac_control.py"
+    ],
+    "sample_params": [
+      {
+        "task": "send the file tiny.txt to Abdullah",
+        "steps": 2
+      },
+      {
+        "attachments": "['/tmp/tiny.txt']",
+        "task": "send the file tiny.txt to Abdullah",
+        "email_to": "tarsitgroup@outlook.com",
+        "account_email": "tarsitgroup@outlook.com",
+        "body": "Abdullah, \n\nHere is the file you requested. \n\nRegards, \nTARS\n\nFile Content:\n```\ntest\n```",
+        "subject": "File from TARS: tiny.txt"
+      }
+    ],
+    "count": 2,
+    "first_seen": "2026-02-20T23:20:29.246290",
+    "last_seen": "2026-02-20T23:20:29.249899",
+    "fixes": [
+      {
+        "fix": "Agent behavior issue: Email agent should use config email (tarsitgroup@outlook.com) as default recipient when user's email isn't in contacts. Brain prompt should specify the recipient email explicitly in the task description.",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:21.833341"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "mac_mail:Unknown mail action: send_email_with_attachment": {
+    "signature": "Unknown mail action: send_email_with_attachment",
+    "context": "mac_mail",
+    "raw_error": "Unknown mail action: send_email_with_attachment",
+    "tool": "mac_mail",
+    "agent": "",
+    "details": "mac_mail recipient=\"tarsitgroup@outlook.com\" \u2192 Unknown mail action: send_email_with_attachment",
+    "source_file": "brain/planner.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "recipient": "tarsitgroup@outlook.com",
+        "subject": "File from TARS: tiny.txt",
+        "attachments": "['/tmp/tiny.txt']",
+        "action": "send_email_with_attachment",
+        "body": "Here's that file, Abdullah. It seems iMessage is being a bit difficult today, so I've sent it via email as a fallback. Let me know if you need anything else."
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-20T23:20:30.951940",
+    "last_seen": "2026-02-20T23:20:30.951943",
+    "fixes": [
+      {
+        "fix": "The correct action name is 'send' not 'send_email'. The brain should use the correct action name from the tool schema. Alternatively, the mail handler should accept 'send_email' as an alias for 'send'.",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:21.833713"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "send_imessage_file:File not found: <PATH>": {
+    "signature": "File not found: <PATH>",
+    "context": "send_imessage_file",
+    "raw_error": "File not found: /tmp/earth_nullschool.png",
+    "tool": "send_imessage_file",
+    "agent": "",
+    "details": "send_imessage_file file_path=\"/tmp/earth_nullschool.png\" \u2192 File not found: /tmp/earth_nullschool.png",
+    "source_file": "brain/planner.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "file_path": "/tmp/earth_nullschool.png",
+        "caption": "Here's something cool for you, Abdullah. Real-time global wind, weather, and ocean conditions, straight from earth.nullschool.net. Pretty neat, huh?"
+      },
+      {
+        "caption": "Here's something cool for you, Abdullah. Real-time global wind, weather, and ocean conditions, straight from earth.nullschool.net. Pretty neat, huh?",
+        "file_path": "/tmp/earth_nullschool.png"
+      }
+    ],
+    "count": 2,
+    "first_seen": "2026-02-20T23:33:43.447678",
+    "last_seen": "2026-02-20T23:33:59.773369",
+    "fixes": [
+      {
+        "fix": "Transient error: brain referenced a file path that does not exist. Brain should verify file existence before calling send_imessage_file.",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:44.110736"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "generate_image:OpenAI API key required for image generation. Set image_generation.api_key in config.yaml.": {
+    "signature": "OpenAI API key required for image generation. Set image_generation.api_key in config.yaml.",
+    "context": "generate_image",
+    "raw_error": "OpenAI API key required for image generation. Set image_generation.api_key in config.yaml.",
+    "tool": "generate_image",
+    "agent": "",
+    "details": "generate_image \u2192 OpenAI API key required for image generation. Set image_generation.api_key in config.yaml.",
+    "source_file": "brain/planner.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "prompt": "A futuristic city with flying cars and towering skyscrapers, in a vibrant cyberpunk style, high detail"
+      },
+      {
+        "prompt": "a cool abstract picture with vibrant colors and geometric shapes"
+      }
+    ],
+    "count": 2,
+    "first_seen": "2026-02-20T23:36:48.447942",
+    "last_seen": "2026-02-20T23:39:48.997351",
+    "fixes": [
+      {
+        "fix": "Configuration issue: Image generation requires an OpenAI API key in config.yaml. Set image_generation.api_key or use a different provider.",
+        "source": "manual",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:21.833684"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "headless_browse:Screenshot error: cannot switch to a different thread (which happens to have exited)": {
+    "signature": "Screenshot error: cannot switch to a different thread (which happens to have exited)",
+    "context": "headless_browse",
+    "raw_error": "Screenshot error: cannot switch to a different thread (which happens to have exited)",
+    "tool": "headless_browse",
+    "agent": "",
+    "details": "headless_browse url=\"https://unsplash.com/photos/abstract-art-with-colorful-geometric-shapes-1WSj5xi9AHo\" \u2192 Screenshot error: cannot switch to a different thread (which happens to have exited)",
+    "source_file": "brain/planner.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "action": "screenshot",
+        "url": "https://unsplash.com/photos/abstract-art-with-colorful-geometric-shapes-1WSj5xi9AHo"
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-20T23:39:52.803023",
+    "last_seen": "2026-02-20T23:39:52.803026",
+    "fixes": [
+      {
+        "fix": "Known playwright/greenlet threading issue. Use deploy_browser_agent (CDP-based) instead of headless_browse for multi-threaded scenarios.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:28:44.110722"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 0
+  },
+  "deploy_screen_agent:Reached max 40 steps": {
+    "signature": "Reached max 40 steps",
+    "context": "deploy_screen_agent",
+    "raw_error": "Reached max 40 steps",
+    "tool": "deploy_screen_agent",
+    "agent": "screen",
+    "details": "Agent stuck after 40 steps",
+    "source_file": "executor.py",
+    "traceback": "",
+    "fix_hint": "Agent hit the step limit or was caught in a loop. Check agents/base_agent.py for loop detection thresholds and the agent's system prompt for better termination instructions.",
+    "fix_hint_files": [
+      "agents/base_agent.py"
+    ],
+    "sample_params": [
+      {
+        "task": "Open Google Chrome and navigate to 'https://unsplash.com/photos/abstract-art-with-colorful-geometric-shapes-1WSj5xi9AHo'. Once the page loads, find the download button, which usually says 'Download free' or has a down-arrow icon, and click it to download the image. Save the downloaded image to '/tmp",
+        "steps": 40
+      },
+      {
+        "task": "\n1. Search Google for \"github\".\n2. Navigate to github.com.\n3. If prompted, log in with email tarsitsales@gmail.com.\n4. Create a new private repository:\n   - Name: 'tars-automation-hub'\n   - Description: 'Central repo for TARS agent automation scripts'\n   - Initialize with a README\n   - Add .gitignor",
+        "steps": 40
+      },
+      {
+        "task": "\n1. Open Google Chrome.\n2. Navigate to google.com.\n3. In the search bar, type \"github.com\" and press enter.\n4. Click on the official GitHub link (github.com) from the search results.\n5. If a login page appears, log in using the email \"tarsitsales@gmail.com\". If already logged in, proceed.\n6. Once on",
+        "steps": 40
+      }
+    ],
+    "count": 3,
+    "first_seen": "2026-02-20T23:43:03.913067",
+    "last_seen": "2026-02-21T20:54:37.830496",
+    "fixes": [
+      {
+        "fix": "Fixed in code: Added observation-only streak detection (6 consecutive look/scroll without action triggers nudge), auto-done for text conclusions (8+ dispatches + conclusion signals \u2192 auto-return), dispatch budget (soft=40, hard=55), and session scratchpad to track attempts/selectors/patterns across steps.",
+        "source": "code_change",
+        "success": true,
+        "confidence": 0.9,
+        "applied_at": "2026-02-21T17:27:53.394532"
+      }
+    ],
+    "auto_fixable": true,
+    "fixed_count": 2
+  },
+  "agent_Screen Agent:Agent stuck: I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")` and `key(\"command+tab\")` multiple times, but the screenshots consistently show the VS Code w": {
+    "signature": "Agent stuck: I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")` and `key(\"command+tab\")` multiple times, but the screenshots consistently show the VS Code w",
+    "context": "agent_Screen Agent",
+    "raw_error": "Agent stuck: I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")` and `key(\"command+tab\")` multiple times, but the screenshots consistently show the VS Code window instead of Chrome. This prevents me from navigating to github.com and completing the login process.",
+    "tool": "stuck",
+    "agent": "Screen Agent",
+    "details": "Agent called stuck() at step 26",
+    "source_file": "agents/base_agent.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "agent": "Screen Agent",
+        "step": 26,
+        "task": "\n1. Open Google Chrome.\n2. Navigate to github.com.\n3. If a login page is displayed, log in using the email \"tarsitsales@gmail.com\". If a password is required, assume it's already saved by Chrome or at",
+        "reason": "I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")` and `key(\"command+tab\")` multiple times, but the screenshots consistently show the VS Code window instead of Chrome. This prevents me from navigating to github.com and completing the login process."
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-21T20:55:42.034170",
+    "last_seen": "2026-02-21T20:55:42.034189",
+    "fixes": [],
+    "auto_fixable": false,
+    "fixed_count": 0
+  },
+  "deploy_screen_agent:I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")` and `key(\"command+tab\")` multiple times, but the screenshots consistently show the VS Code window instead": {
+    "signature": "I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")` and `key(\"command+tab\")` multiple times, but the screenshots consistently show the VS Code window instead",
+    "context": "deploy_screen_agent",
+    "raw_error": "I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")` and `key(\"command+tab\")` multiple times, but the screenshots consistently show the VS Code window instead of Chrome. This prevents me from navigating to github.com and completing the login process.",
+    "tool": "deploy_screen_agent",
+    "agent": "screen",
+    "details": "Agent stuck after 26 steps",
+    "source_file": "executor.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "task": "\n1. Open Google Chrome.\n2. Navigate to github.com.\n3. If a login page is displayed, log in using the email \"tarsitsales@gmail.com\". If a password is required, assume it's already saved by Chrome or attempt to use a common secure password if prompted (but prioritize saved credentials).\n4. If already ",
+        "steps": 26
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-21T20:55:42.196704",
+    "last_seen": "2026-02-21T20:55:42.196708",
+    "fixes": [],
+    "auto_fixable": false,
+    "fixed_count": 0
+  },
+  "deploy_browser_agent:Agent exception: Handshake status 403 Forbidden -+-+- {'content-length': '239', 'content-type': 'text<PATH>'} -+-+- b'<LONG_STR>'": {
+    "signature": "Agent exception: Handshake status 403 Forbidden -+-+- {'content-length': '239', 'content-type': 'text<PATH>'} -+-+- b'<LONG_STR>'",
+    "context": "deploy_browser_agent",
+    "raw_error": "Agent exception: Handshake status 403 Forbidden -+-+- {'content-length': '239', 'content-type': 'text/html'} -+-+- b'Rejected an incoming WebSocket connection from the http://localhost:9222 origin. Use the command line flag --remote-allow-origins=http://localhost:9222 to allow connections from this origin or --remote-allow-origins=* to allow all origins.'",
+    "tool": "deploy_browser_agent",
+    "agent": "browser",
+    "details": "Agent stuck after 0 steps",
+    "source_file": "executor.py",
+    "traceback": "",
+    "fix_hint": "Browser agent couldn't interact with a page element. Possible causes: wrong CSS selector, element not visible, page didn't load, or anti-bot detection. Check browser.py action functions and the agent's system prompt for better selectors/wait strategies.",
+    "fix_hint_files": [
+      "hands/browser.py",
+      "agents/browser_agent.py",
+      "hands/browser_agent.py"
+    ],
+    "sample_params": [
+      {
+        "task": "\n1. Navigate to https://github.com/login.\n2. Look for the login form. If the email field is visible, type 'tarsitsales@gmail.com' into the email field. If a password field is visible, try to fill it with any saved credentials or a common secure password, as Chrome should ideally autofill it.\n3. If a",
+        "steps": 0
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-21T20:55:49.843598",
+    "last_seen": "2026-02-21T20:55:49.843606",
+    "fixes": [],
+    "auto_fixable": false,
+    "fixed_count": 0
+  },
+  "agent_Screen Agent:Agent stuck: I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")`, `key(\"command+tab\")`, and `key(\"command+space\")` followed by typing \"Google Chrome\" and pre": {
+    "signature": "Agent stuck: I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")`, `key(\"command+tab\")`, and `key(\"command+space\")` followed by typing \"Google Chrome\" and pre",
+    "context": "agent_Screen Agent",
+    "raw_error": "Agent stuck: I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")`, `key(\"command+tab\")`, and `key(\"command+space\")` followed by typing \"Google Chrome\" and pressing return multiple times, but the screenshots consistently show the VS Code window instead. I cannot proceed with the task as I cannot access the browser.",
+    "tool": "stuck",
+    "agent": "Screen Agent",
+    "details": "Agent called stuck() at step 31",
+    "source_file": "agents/base_agent.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "agent": "Screen Agent",
+        "step": 31,
+        "task": "\n1. Navigate to https://github.com/login.\n2. Look for the login form. If the email field is visible, type 'tarsitsales@gmail.com' into the email field. If a password field is visible, try to fill it w",
+        "reason": "I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")`, `key(\"command+tab\")`, and `key(\"command+space\")` followed by typing \"Google Chrome\" and pressing return multiple times, but the screenshots consistently show the VS Code window instead. I cannot proceed w"
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-21T20:57:51.760831",
+    "last_seen": "2026-02-21T20:57:51.760847",
+    "fixes": [],
+    "auto_fixable": false,
+    "fixed_count": 0
+  },
+  "deploy_screen_agent:I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")`, `key(\"command+tab\")`, and `key(\"command+space\")` followed by typing \"Google Chrome\" and pressing return": {
+    "signature": "I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")`, `key(\"command+tab\")`, and `key(\"command+space\")` followed by typing \"Google Chrome\" and pressing return",
+    "context": "deploy_screen_agent",
+    "raw_error": "I am unable to bring Google Chrome to the foreground. I have tried `open_app(\"Google Chrome\")`, `key(\"command+tab\")`, and `key(\"command+space\")` followed by typing \"Google Chrome\" and pressing return multiple times, but the screenshots consistently show the VS Code window instead. I cannot proceed with the task as I cannot access the browser.",
+    "tool": "deploy_screen_agent",
+    "agent": "screen",
+    "details": "Agent stuck after 31 steps",
+    "source_file": "executor.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "task": "\n1. Navigate to https://github.com/login.\n2. Look for the login form. If the email field is visible, type 'tarsitsales@gmail.com' into the email field. If a password field is visible, try to fill it with any saved credentials or a common secure password, as Chrome should ideally autofill it.\n3. If a",
+        "steps": 31
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-21T20:57:51.919280",
+    "last_seen": "2026-02-21T20:57:51.919288",
     "fixes": [],
     "auto_fixable": false,
     "fixed_count": 0

@@ -16,8 +16,7 @@ llm:
 imessage:
   owner_phone: "+1XXXXXXXXXX"
   poll_interval: 2
-  rate_limit: 30
-  max_message_length: 1600
+  max_message_length: 1600   # per-chunk max; long messages auto-split into multiple iMessages
 
 # Safety
 safety:
@@ -42,6 +41,12 @@ agent:
   log_level: "INFO"
   log_file: "logs/tars.log"
 
+# Research Agent APIs (optional — enhances research quality)
+research:
+  serper_api_key: ""           # Serper.dev Google Search API key ($5/2500 searches)
+                               # Sign up: https://serper.dev — eliminates CAPTCHA issues
+                               # If empty, falls back to Chrome CDP + DuckDuckGo
+
 # Cloud Relay (Railway deployment)
 relay:
   url: ""                      # wss://your-app.railway.app/tunnel
@@ -56,3 +61,69 @@ daily_improvement:
   auto_push: true             # Auto git push after improvements
   git_remote: "origin"
   git_branch: "main"
+
+# Voice Interface (microphone + speaker conversational mode)
+voice:
+  enabled: false               # Set to true to enable voice mode
+  tts_engine: "macos"          # "macos" (free, instant) or "openai" (higher quality)
+  stt_engine: "whisper_api"    # "whisper_api" (OpenAI) or "whisper_local" (offline)
+  tts_voice: "Daniel"          # macOS voice name (try: say -v '?' to list)
+  tts_rate: 190                # Words per minute for macOS TTS
+  openai_api_key: ""           # Required for whisper_api STT and openai TTS
+  silence_threshold: 500       # Mic sensitivity (lower = more sensitive)
+  wake_word: ""                # Optional: e.g. "hey tars" — empty = always listen
+
+# Scheduled Tasks (proactive autonomous actions)
+scheduler:
+  enabled: true
+  tasks: []                    # Added at runtime via schedule_task tool
+  # Example task:
+  # - cron: "0 9 * * *"       # Every day at 9 AM
+  #   task: "Check my email and summarize unread"
+  #   enabled: true
+
+# Image Generation
+image_generation:
+  provider: "openai"           # "openai" (DALL-E 3)
+  api_key: ""                  # OpenAI API key (can reuse voice.openai_api_key)
+  default_size: "1024x1024"    # 1024x1024, 1792x1024, or 1024x1792
+  default_quality: "standard"  # "standard" or "hd"
+
+# Home Automation
+home_automation:
+  enabled: false
+  homeassistant_url: ""        # e.g. http://homeassistant.local:8123
+  homeassistant_token: ""      # Long-lived access token
+
+# Environment Setup — Autonomous workspace management
+environment:
+  enabled: true                # Auto-setup on startup (screens, apps, DND)
+  tars_screen: "left"          # Which external monitor is TARS's: "left" or "right"
+  dnd: true                    # Enable Do Not Disturb on startup
+  volume: 15                   # Set volume % on startup (0-100)
+  close_clutter: true          # Close unnecessary apps (System Settings, App Store, etc.)
+  open_essentials: true        # Open Messages + Mail (hidden)
+  arrange_windows: true        # Move Chrome→TARS screen, VS Code→dev screen
+  clipboard_guard: true        # Save/restore clipboard during TARS operations
+  focus_guard: true            # Restore focus after TARS steals it
+
+# MCP (Model Context Protocol) — Connect to external tool servers
+mcp:
+  servers: []
+  # Example MCP server configs:
+  # - name: "filesystem"
+  #   command: "npx"
+  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/you/Documents"]
+  # - name: "github"
+  #   command: "npx"
+  #   args: ["-y", "@modelcontextprotocol/server-github"]
+  #   env:
+  #     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
+  # - name: "sqlite"
+  #   command: "npx"
+  #   args: ["-y", "@modelcontextprotocol/server-sqlite", "~/data/mydb.sqlite"]
+  # - name: "brave-search"
+  #   command: "npx"
+  #   args: ["-y", "@modelcontextprotocol/server-brave-search"]
+  #   env:
+  #     BRAVE_API_KEY: "..."

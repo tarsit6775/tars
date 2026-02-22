@@ -318,34 +318,93 @@ class MessageStreamParser:
 
         # Strip correction prefix words
         clean = re.sub(
-            r"^(actually|wait|no|nah|instead|make it|switch to|i meant|sorry|oops|correction)[,:]?\s*",
+            r"^(actually|wait|no|nah|instead|make it|switch (it |that )?to|i meant|sorry|oops|correction)[,:]?\s*",
             "",
             correction.lower(),
         ).strip()
 
+        # Strip trailing "instead" — "use vue instead" → "use vue"
+        clean = re.sub(r"\s+instead$", "", clean).strip()
+
+        # Handle "use X instead" → extract just "X"
+        use_match = re.match(r"^use\s+(.+?)(?:\s+instead)?$", clean, re.IGNORECASE)
+        if use_match:
+            clean = use_match.group(1).strip()
+
         if not clean:
             return prev
 
-        # Simple replacement heuristic: if the correction is short (1-3 words),
-        # it's likely replacing a specific part of the previous message
-        if len(clean.split()) <= 3 and len(prev.split()) > 3:
-            # Try to find and replace in previous text
-            # e.g., prev="search flights to NYC", clean="Tokyo"
-            # This is a best-effort heuristic
-            pass
+        prev_lower = prev.lower()
+        clean_words = clean.split()
 
-        # Default: the correction IS the new instruction
-        # Keep the verb/action from previous if correction doesn't have one
-        action_words = ["search", "find", "build", "create", "make", "send",
-                        "deploy", "check", "track", "book", "organize"]
+        # ── Strategy 1: "X instead of Y" / "X not Y" ──
+        # "Tokyo instead of NYC" → replace NYC with Tokyo in prev
+        instead_match = re.match(r"(.+?)\s+instead\s+of\s+(.+)", clean, re.IGNORECASE)
+        if instead_match:
+            replacement = instead_match.group(1).strip()
+            target = instead_match.group(2).strip()
+            result = re.sub(re.escape(target), replacement, prev, count=1, flags=re.IGNORECASE)
+            if result.lower() != prev_lower:
+                return result
+
+        not_but_match = re.match(r"not\s+(.+?)[,]\s*(but|use|try|do)\s+(.+)", clean, re.IGNORECASE)
+        if not_but_match:
+            target = not_but_match.group(1).strip()
+            replacement = not_but_match.group(3).strip()
+            result = re.sub(re.escape(target), replacement, prev, count=1, flags=re.IGNORECASE)
+            if result.lower() != prev_lower:
+                return result
+
+        # ── Strategy 2: Short correction (1-3 words) — find & replace the
+        #    most likely target word in the previous message.
+        #    e.g. prev="search flights to NYC", clean="Tokyo"
+        #    Find the word in prev that is the same "type" as the correction
+        #    (proper noun for proper noun, number for number, etc.)
+        if len(clean_words) <= 3 and len(prev.split()) > 3:
+            # Try direct substring replacement — if correction word is a
+            # known category swap (city for city, name for name, number for number)
+            prev_words = prev.split()
+
+            # Heuristic: replace the last proper-noun-like or quoted word
+            # that isn't a common verb/preposition.  Works for destinations,
+            # names, frameworks, etc.
+            stop_words = {
+                "search", "find", "build", "create", "make", "send", "deploy",
+                "check", "track", "book", "organize", "get", "look", "set",
+                "the", "a", "an", "to", "for", "from", "in", "on", "at",
+                "with", "and", "or", "of", "my", "me", "it", "is", "was",
+                "up", "app", "flights", "flight", "hotel", "hotels", "email",
+            }
+
+            # Walk backwards through prev to find the best replacement target.
+            # The last "content word" (not a stop word) is usually what the
+            # user is correcting.
+            for i in range(len(prev_words) - 1, -1, -1):
+                candidate = prev_words[i].strip(".,!?:;\"'()[]")
+                if candidate.lower() not in stop_words and len(candidate) > 1:
+                    # Replace this word with the correction
+                    prev_words[i] = clean
+                    return " ".join(prev_words)
+
+        # ── Strategy 3: The correction has its own action verb — it
+        #    completely replaces the previous instruction.
+        action_words = [
+            "search", "find", "build", "create", "make", "send",
+            "deploy", "check", "track", "book", "organize", "get",
+            "look", "set", "open", "close", "run", "start", "stop",
+            "download", "upload", "install", "delete", "remove",
+        ]
         has_action = any(clean.startswith(w) for w in action_words)
 
-        if not has_action and prev:
-            # Correction is modifying a detail, not the whole instruction
-            # e.g., "search flights to NYC" + "actually Tokyo" → use Tokyo as destination
-            return f"{prev} (correction: {clean})"
+        if has_action:
+            # Full replacement — user rephrased the whole instruction
+            return clean
 
-        return clean
+        # ── Strategy 4: Correction modifies a detail, keep original structure.
+        # Append as a natural clause so the brain understands.
+        # e.g. "search flights to NYC" + "actually Tokyo"
+        #   → "search flights to Tokyo" (if strategy 2 worked) or fall through here
+        return f"{prev} — correction: {clean}"
 
     @staticmethod
     def _detect_stream_intent(text: str) -> str:

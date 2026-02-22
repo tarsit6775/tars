@@ -29,6 +29,22 @@ memory/decision_cache.json
 memory/error_patterns.json
 memory/threads/
 memory/agents/brain.json
+memory/credentials.md
+memory/accounts.json
+memory/chroma_db/
+memory/session_state.json
+memory/error_tracker.json
+memory/site_knowledge.json
+memory/email_*.json
+memory/inbox_zero_history.json
+memory/daily_improve_state.json
+
+# ── Tokens & Temp Files ───────────────────
+.dashboard_token
+_run_task.py
+_run_test.py
+send_msg.py
+send_task.py
 
 # ── Relay build artifact (committed by CI) ──
 # relay/static/ is committed by GitHub Actions after build

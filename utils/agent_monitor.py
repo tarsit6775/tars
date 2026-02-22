@@ -13,7 +13,7 @@ import time
 class AgentMonitor:
     """Tracks the state of all agents in real-time."""
 
-    AGENTS = ["browser", "coder", "system", "research", "file"]
+    AGENTS = ["browser", "coder", "system", "research", "file", "dev", "screen"]
 
     def __init__(self):
         self._states = {}
@@ -89,7 +89,7 @@ class AgentMonitor:
 
             agents.append({
                 "name": name,
-                "emoji": {"browser": "🌐", "coder": "💻", "system": "⚙️", "research": "🔍", "file": "📁"}.get(name, "🤖"),
+                "emoji": {"browser": "🌐", "coder": "💻", "system": "⚙️", "research": "🔍", "file": "📁", "dev": "🛠️", "screen": "🖥️"}.get(name, "🤖"),
                 "status": state["status"],
                 "task": (state["task"] or "")[:100],
                 "step": state["step"],

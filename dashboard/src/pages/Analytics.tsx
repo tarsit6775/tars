@@ -1,5 +1,5 @@
 import { useTars } from '../context/ConnectionContext'
-import { BarChart3, PieChart as PieIcon, TrendingUp, Zap } from 'lucide-react'
+import { BarChart3, PieChart as PieIcon, TrendingUp, Zap, Mail, Send, Inbox, Bell } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, CartesianGrid,
@@ -8,7 +8,7 @@ import {
 const COLORS = ['#06b6d4', '#3b82f6', '#8b5cf6', '#f97316', '#10b981', '#f59e0b', '#ef4444', '#ec4899']
 
 export default function AnalyticsPage() {
-  const { stats, actionLog } = useTars()
+  const { stats, actionLog, emailStats, emailEvents } = useTars()
 
   // Tool usage data
   const toolData = Object.entries(stats.tool_usage || {})
@@ -175,6 +175,117 @@ export default function AnalyticsPage() {
               <Line type="monotone" dataKey="tokens" stroke="#06b6d4" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* ─── Email Analytics Section ─── */}
+      <div className="border-t border-slate-800/50 pt-4">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3 flex items-center gap-2">
+          <Mail size={14} className="text-signal-cyan" /> Email Analytics
+        </h2>
+
+        {/* Email stat cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <StatCard label="Unread" value={emailStats.unread} color="text-signal-cyan" icon={<Inbox size={11} />} />
+          <StatCard label="Sent Today" value={emailStats.sent_today} color="text-signal-green" icon={<Send size={11} />} />
+          <StatCard label="Rules" value={emailStats.rules_count} color="text-signal-purple" icon={<Bell size={11} />} />
+          <StatCard label="Scheduled" value={emailStats.scheduled_pending} color="text-signal-amber" icon={<Mail size={11} />} />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Top senders chart */}
+          <div className="panel-inset rounded-xl p-4">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3">Top Senders</h3>
+            {emailStats.top_senders && emailStats.top_senders.length > 0 ? (
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={emailStats.top_senders.map((s: { name: string; count: number }) => ({
+                  name: s.name.length > 20 ? s.name.substring(0, 20) + '…' : s.name,
+                  count: s.count,
+                }))} layout="vertical" margin={{ left: 100 }}>
+                  <XAxis type="number" tick={{ fontSize: 10, fill: '#64748b' }} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fill: '#94a3b8' }} width={95} />
+                  <Tooltip content={customTooltip} />
+                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                    {emailStats.top_senders.map((_: unknown, i: number) => (
+                      <Cell key={i} fill={COLORS[i % COLORS.length]} fillOpacity={0.7} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-[180px] flex items-center justify-center text-slate-600 text-xs">No sender data yet</div>
+            )}
+          </div>
+
+          {/* Email event breakdown */}
+          <div className="panel-inset rounded-xl p-4">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3">Email Activity</h3>
+            {(() => {
+              const eventCounts: Record<string, number> = {}
+              emailEvents.forEach(e => {
+                const type = e.type || 'other'
+                eventCounts[type] = (eventCounts[type] || 0) + 1
+              })
+              const eventData = Object.entries(eventCounts)
+                .map(([name, value]) => ({
+                  name: name.replace('email_', '').replace(/_/g, ' '),
+                  value,
+                }))
+                .sort((a, b) => b.value - a.value)
+
+              if (eventData.length === 0) {
+                return <div className="h-[180px] flex items-center justify-center text-slate-600 text-xs">No email events yet</div>
+              }
+
+              return (
+                <>
+                  <ResponsiveContainer width="100%" height={120}>
+                    <PieChart>
+                      <Pie data={eventData} cx="50%" cy="50%" innerRadius={30} outerRadius={50} dataKey="value" paddingAngle={2}>
+                        {eventData.map((_, i) => (
+                          <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={customTooltip} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="flex flex-wrap justify-center gap-3 text-[9px] mt-2">
+                    {eventData.slice(0, 6).map((d, i) => (
+                      <span key={i} className="flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
+                        <span className="text-slate-400">{d.name}: {d.value}</span>
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )
+            })()}
+          </div>
+
+          {/* Rules activity */}
+          <div className="panel-inset rounded-xl p-4 lg:col-span-2">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3">Email Overview</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center">
+                <div className="text-lg font-bold text-signal-cyan">{emailStats.inbox_total}</div>
+                <div className="text-[9px] text-slate-500 uppercase tracking-wider">Total Inbox</div>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-bold text-signal-green">{emailStats.rules_triggered_today}</div>
+                <div className="text-[9px] text-slate-500 uppercase tracking-wider">Rules Triggered Today</div>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-bold text-signal-amber">{emailStats.drafts}</div>
+                <div className="text-[9px] text-slate-500 uppercase tracking-wider">Drafts</div>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-bold" style={{ color: emailStats.monitor_active ? '#10b981' : '#ef4444' }}>
+                  {emailStats.monitor_active ? 'ACTIVE' : 'OFF'}
+                </div>
+                <div className="text-[9px] text-slate-500 uppercase tracking-wider">Inbox Monitor</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

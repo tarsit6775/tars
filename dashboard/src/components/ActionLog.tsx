@@ -1,5 +1,5 @@
 import { useTars } from '../context/ConnectionContext'
-import { Activity, CheckCircle2, XCircle, Clock, Wrench } from 'lucide-react'
+import { Activity, CheckCircle2, XCircle, Clock, Wrench, Mail } from 'lucide-react'
 import clsx from 'clsx'
 
 export default function ActionLog() {
@@ -39,7 +39,10 @@ export default function ActionLog() {
             >
               <div className="text-slate-600 text-[10px] truncate">{entry.time}</div>
               <div className="flex items-center gap-1 text-thrust font-semibold truncate">
-                <Wrench size={10} className="shrink-0" />
+                {entry.toolName.startsWith('mail') || entry.toolName.startsWith('email') || entry.toolName === 'deploy_email_agent'
+                  ? <Mail size={10} className="shrink-0 text-signal-cyan" />
+                  : <Wrench size={10} className="shrink-0" />
+                }
                 {entry.toolName}
               </div>
               <div className="text-slate-400 truncate" title={entry.detail}>{entry.detail}</div>

@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTars } from '../context/ConnectionContext'
 import StatusHUD from './StatusHUD'
-import KillSwitch from './KillSwitch'
-import { Activity, Cpu, DollarSign, Clock, BarChart3 } from 'lucide-react'
+import { Clock, Cpu, DollarSign, BarChart3 } from 'lucide-react'
 
 function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600)
@@ -23,7 +22,7 @@ interface MissionControlBarProps {
 }
 
 export default function MissionControlBar({ activeView, onViewChange }: MissionControlBarProps) {
-  const { stats, currentModel, connectionState, actionLog } = useTars()
+  const { stats, currentModel, actionLog } = useTars()
   const [uptime, setUptime] = useState(0)
 
   useEffect(() => {
@@ -34,21 +33,22 @@ export default function MissionControlBar({ activeView, onViewChange }: MissionC
 
   const views = [
     { id: 'dashboard', label: 'CONTROL' },
+    { id: 'email', label: 'EMAIL' },
     { id: 'analytics', label: 'ANALYTICS' },
     { id: 'memory', label: 'MEMORY' },
     { id: 'settings', label: 'SETTINGS' },
   ]
 
   return (
-    <header className="relative z-20 glass-heavy flex items-center h-12 px-3 gap-2 select-none" role="banner">
+    <header className="relative z-20 glass-heavy flex items-center h-11 px-4 gap-3 select-none" role="banner">
       {/* Logo */}
-      <div className="flex items-center gap-3 mr-2">
+      <div className="flex items-center gap-3 mr-1">
         <h1 className="text-base font-extrabold tracking-[0.25em] text-gradient">TARS</h1>
-        <div className="hidden md:block h-5 w-px bg-panel-border" />
+        <div className="hidden md:block h-4 w-px bg-panel-border" />
       </div>
 
       {/* Nav tabs */}
-      <nav className="hidden md:flex items-center gap-0.5 mr-2">
+      <nav className="hidden md:flex items-center gap-0.5 mr-auto">
         {views.map(v => (
           <button
             key={v.id}
@@ -64,42 +64,29 @@ export default function MissionControlBar({ activeView, onViewChange }: MissionC
         ))}
       </nav>
 
-      {/* Status HUD - center */}
-      <div className="hidden lg:flex flex-1 justify-center">
+      {/* Status HUD — center/right */}
+      <div className="hidden md:flex items-center">
         <StatusHUD />
       </div>
 
-      {/* Metrics ticker */}
-      <div className="hidden xl:flex items-center gap-4 text-[10px] text-slate-500 mr-3">
-        <div className="flex items-center gap-1.5">
-          <Clock size={11} className="text-slate-600" />
-          <span className="text-star-white font-semibold">{formatUptime(stats.uptime_seconds || uptime)}</span>
+      {/* Metrics — far right */}
+      <div className="hidden lg:flex items-center gap-3 text-[10px] text-slate-500 ml-3">
+        <div className="flex items-center gap-1" title="Uptime">
+          <Clock size={10} className="text-slate-600" />
+          <span className="text-star-white font-semibold tabular-nums">{formatUptime(stats.uptime_seconds || uptime)}</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <Cpu size={11} className="text-slate-600" />
-          <span className="text-star-white font-semibold">{currentModel.includes('haiku') ? 'Haiku' : currentModel.includes('sonnet') ? 'Sonnet' : '--'}</span>
+        <div className="flex items-center gap-1" title="Cost">
+          <DollarSign size={10} className="text-slate-600" />
+          <span className="text-star-white font-semibold">{(stats.total_cost || 0).toFixed(3)}</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <Activity size={11} className="text-slate-600" />
-          <span className="text-star-white font-semibold">{actionLog.length}</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <DollarSign size={11} className="text-slate-600" />
-          <span className="text-star-white font-semibold">${(stats.total_cost || 0).toFixed(3)}</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <BarChart3 size={11} className="text-slate-600" />
+        <div className="flex items-center gap-1" title="Tokens">
+          <BarChart3 size={10} className="text-slate-600" />
           <span className="text-star-white font-semibold">{formatNumber((stats.total_tokens_in || 0) + (stats.total_tokens_out || 0))}</span>
         </div>
       </div>
 
-      {/* Kill switch */}
-      <KillSwitch />
-
-      {/* Connection bar */}
-      {connectionState !== 'connected' && (
-        <div className="absolute top-0 left-0 right-0 h-0.5 bg-signal-red animate-pulse" />
-      )}
+      {/* Connection indicator line */}
+      {/* (connectionState checked via StatusHUD now) */}
     </header>
   )
 }

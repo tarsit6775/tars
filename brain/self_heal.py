@@ -436,7 +436,18 @@ class SelfHealEngine:
     # ═══════════════════════════════════════════════════
 
     def _build_healing_prompt(self, proposal: HealingProposal) -> str:
-        """Build a detailed prompt for the dev agent to modify TARS's code."""
+        """Build a detailed prompt for the dev agent to modify TARS's code.
+
+        Combines the specific proposal with the full error tracker context
+        so the dev agent has maximum information about what's broken.
+        """
+        # Get the full error tracker dev prompt for context
+        tracker_context = ""
+        try:
+            tracker_context = error_tracker.generate_dev_prompt(max_errors=10)
+        except Exception:
+            pass
+
         return (
             f"## TARS Self-Healing: Modify TARS's Own Code\n\n"
             f"**IMPORTANT**: You are modifying TARS itself — the autonomous agent codebase. "
@@ -452,7 +463,12 @@ class SelfHealEngine:
             f"3. Follow the project's patterns (tool return format, event_bus, etc.)\n"
             f"4. After changes, run: python3 test_systems.py\n"
             f"5. If tests pass, commit with message: 'self-heal: {proposal.category} - {proposal.trigger[:60]}'\n"
-            f"6. Do NOT modify config.yaml or any files with API keys\n"
+            f"6. Do NOT modify config.yaml or any files with API keys\n\n"
+            f"---\n\n"
+            f"## Full Error Tracker Context\n\n"
+            f"Below is the complete error tracker output. Use this to understand "
+            f"ALL current issues and avoid introducing regressions:\n\n"
+            f"{tracker_context}\n"
         )
 
     @staticmethod

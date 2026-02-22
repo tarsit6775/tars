@@ -449,7 +449,9 @@ class ThreadManager:
         
         Includes:
         - Active thread: full recent history, task status, subtasks, decisions
+        - Decision quality metrics (success rate, common patterns)
         - Recent threads: brief summaries for cross-reference
+        - Topic drift detection
         
         This is the thread-awareness that makes "did it work?" answerable.
         """
@@ -487,9 +489,16 @@ class ThreadManager:
                     if st.result:
                         parts.append(f"       → {st.result[:150]}")
 
-            # Recent decisions
+            # Recent decisions with quality metrics
             if active.decisions:
-                parts.append(f"\nRecent decisions:")
+                total_d = len(active.decisions)
+                outcomes = [d.outcome for d in active.decisions if d.outcome]
+                successes = sum(1 for o in outcomes if o in ("success", "completed", "done"))
+                failures = sum(1 for o in outcomes if o in ("failed", "error"))
+                if outcomes:
+                    parts.append(f"\nDecision track record: {successes}✅ {failures}❌ of {len(outcomes)} evaluated")
+
+                parts.append(f"Recent decisions:")
                 for d in active.decisions[-5:]:
                     outcome = f" → {d.outcome}" if d.outcome else ""
                     parts.append(f"  → {d.action} (confidence: {d.confidence:.0f}/100){outcome}")
@@ -506,6 +515,36 @@ class ThreadManager:
                 parts.append(f"  - {t.summary}{stale}")
 
         return "\n".join(parts) if parts else ""
+
+    def get_decision_quality(self) -> dict:
+        """
+        Get decision quality metrics across recent threads.
+        Helps metacognition understand brain decision-making quality.
+        """
+        all_decisions = []
+        for thread in self.recent_threads[:5]:
+            all_decisions.extend(thread.decisions)
+
+        if not all_decisions:
+            return {"total": 0, "success_rate": 0.0}
+
+        evaluated = [d for d in all_decisions if d.outcome]
+        successes = sum(1 for d in evaluated if d.outcome in ("success", "completed", "done"))
+        failures = sum(1 for d in evaluated if d.outcome in ("failed", "error"))
+
+        # Average confidence of successful vs failed decisions
+        success_conf = [d.confidence for d in evaluated if d.outcome in ("success", "completed", "done")]
+        failure_conf = [d.confidence for d in evaluated if d.outcome in ("failed", "error")]
+
+        return {
+            "total": len(all_decisions),
+            "evaluated": len(evaluated),
+            "successes": successes,
+            "failures": failures,
+            "success_rate": (successes / max(len(evaluated), 1)) * 100,
+            "avg_success_confidence": sum(success_conf) / max(len(success_conf), 1),
+            "avg_failure_confidence": sum(failure_conf) / max(len(failure_conf), 1),
+        }
 
     def get_thread_stats(self) -> dict:
         """Get thread statistics for dashboard/monitoring."""
@@ -527,15 +566,42 @@ class ThreadManager:
 
     @staticmethod
     def _extract_topic(text: str) -> str:
-        """Extract a short topic from a message for thread naming."""
-        # Remove common prefixes
+        """
+        Extract a short, meaningful topic from a message for thread naming.
+        Uses domain-aware keyword extraction instead of just first 50 chars.
+        """
         import re
+        clean = text.strip()
+
+        # Remove common prefixes
         clean = re.sub(
-            r"^(hey |hi |yo |can you |could you |please |i need you to |i want you to )",
-            "", text.lower(),
+            r"^(hey |hi |yo |can you |could you |please |i need you to |i want you to |"
+            r"i need |i want |go ahead and |let's |let me |help me )",
+            "", clean.lower(),
         ).strip()
 
-        # Take first 50 chars, break at word boundary
+        # Try to extract a meaningful topic via action + object
+        # e.g. "search flights to NYC" → "Search flights to NYC"
+        action_match = re.match(
+            r"(search|find|create|build|make|send|email|book|order|deploy|"
+            r"install|setup|fix|debug|check|update|download|research|track|"
+            r"schedule|remind|generate|monitor|organize|write|delete|move|"
+            r"compare|analyze|run|test|configure)\s+(.{5,50})",
+            clean, re.IGNORECASE
+        )
+        if action_match:
+            topic = f"{action_match.group(1)} {action_match.group(2)}"
+            # Break at word boundary if too long
+            if len(topic) > 50:
+                topic = topic[:50].rsplit(" ", 1)[0]
+            return topic[:1].upper() + topic[1:]
+
+        # Look for quoted targets
+        quoted = re.findall(r'"([^"]{3,40})"', clean)
+        if quoted:
+            return quoted[0][:1].upper() + quoted[0][1:]
+
+        # Fall back to first 50 chars, break at word boundary
         if len(clean) > 50:
             clean = clean[:50].rsplit(" ", 1)[0]
 

@@ -4,8 +4,34 @@ import { sendBrowserNotification } from '../lib/notifications'
 import type {
   TarsEvent, ConnectionState, SubsystemStatus, TarsStats,
   TaskItem, ThinkingBlock, ChatMessage, ActionLogEntry,
-  TarsProcess, OutputLine,
+  TarsProcess, OutputLine, EmailEvent, EmailStats,
 } from '../lib/types'
+
+interface InitStep {
+  label: string
+  detail: string
+  status: 'ok' | 'fail' | 'skip'
+  ts: number
+}
+
+interface TarsInitData {
+  phase: 'complete'
+  steps: InitStep[]
+  environment: {
+    battery?: string
+    wifi?: string
+    disk_free?: string
+    volume?: string | number
+    dark_mode?: boolean
+    running_apps?: string[]
+    screen_bounds?: string
+    frontmost_app?: string
+  }
+  brain_llm: string
+  agent_llm: string
+  version: string
+  uptime_start: number
+}
 
 interface TarsContextValue {
   // Connection
@@ -15,6 +41,8 @@ interface TarsContextValue {
   // TARS Process
   tarsProcess: TarsProcess
   outputLog: OutputLine[]
+  // Init / Boot
+  initData: TarsInitData | null
   // Data
   tasks: TaskItem[]
   thinkingBlocks: ThinkingBlock[]
@@ -25,6 +53,9 @@ interface TarsContextValue {
   // Memory
   memoryContext: string
   memoryPreferences: string
+  // Email
+  emailEvents: EmailEvent[]
+  emailStats: EmailStats
   // Control Actions
   startTars: (task?: string) => void
   stopTars: () => void
@@ -58,6 +89,12 @@ const defaultProcess: TarsProcess = {
   status: 'stopped',
   uptime: 0,
   last_task: null,
+}
+
+const defaultEmailStats: EmailStats = {
+  unread: 0, inbox_total: 0, sent_today: 0, drafts: 0,
+  rules_count: 0, rules_triggered_today: 0, scheduled_pending: 0,
+  monitor_active: false, top_senders: [],
 }
 
 const TarsContext = createContext<TarsContextValue | null>(null)
@@ -94,10 +131,14 @@ export function TarsProvider({ children }: { children: React.ReactNode }) {
   const [currentModel, setCurrentModel] = useState('--')
   const [memoryContext, setMemoryContext] = useState('')
   const [memoryPreferences, setMemoryPreferences] = useState('')
+  const [emailEvents, setEmailEvents] = useState<EmailEvent[]>([])
+  const [emailStats, setEmailStats] = useState<EmailStats>(defaultEmailStats)
+  const [initData, setInitData] = useState<TarsInitData | null>(null)
 
   const taskIdRef = useRef(0)
   const msgIdRef = useRef(0)
   const actionIdRef = useRef(0)
+  const emailEventIdRef = useRef(0)
   const blockIdRef = useRef(0)
   const currentThinkRef = useRef<string | null>(null)
 
@@ -166,6 +207,14 @@ export function TarsProvider({ children }: { children: React.ReactNode }) {
       }
 
       case 'command_response':
+        break
+
+      // ── Init / Boot Sequence ──
+      case 'tars_init':
+        setInitData(data as TarsInitData)
+        setSubsystems(s => ({ ...s, agent: 'online' }))
+        setTarsProcess(prev => ({ ...prev, running: true, status: 'running' }))
+        appendLog('system', `🚀 TARS v${data.version} initialized — ${(data.steps || []).length} subsystems loaded`, 'tars_init')
         break
 
       // ── Task Events ──
@@ -332,6 +381,590 @@ export function TarsProvider({ children }: { children: React.ReactNode }) {
         sendBrowserNotification('TARS // KILLED', 'Kill switch activated')
         break
 
+      // ── Email Events ──
+      case 'email_sent': {
+        emailEventIdRef.current++
+        const to = data.to ? (Array.isArray(data.to) ? data.to.join(', ') : data.to) : ''
+        const subj = data.subject || ''
+        const detail = data.action === 'reply'
+          ? `↩️ Replied to message #${data.index || '?'}${data.reply_all ? ' (all)' : ''}`
+          : data.action === 'forward'
+          ? `➡️ Forwarded to ${data.to}`
+          : `📤 Sent to ${to}: ${subj}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'sent' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(s => ({ ...s, sent_today: s.sent_today + 1 }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_received': {
+        emailEventIdRef.current++
+        const sender = data.from || data.sender || 'Unknown'
+        const subj = data.subject || 'No subject'
+        const detail = `📬 From ${sender}: ${subj}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'received' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(s => ({ ...s, unread: s.unread + 1, inbox_total: s.inbox_total + 1 }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        sendBrowserNotification('TARS // Email', `From ${sender}: ${subj}`)
+        break
+      }
+      case 'email_rule_triggered': {
+        emailEventIdRef.current++
+        const ruleName = data.rule_name || data.rule || 'Unknown rule'
+        const detail = `⚡ Rule "${ruleName}" triggered → ${data.actions_taken || data.action || '?'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'rule_triggered' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(s => ({ ...s, rules_triggered_today: s.rules_triggered_today + 1 }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_rule_added': {
+        emailEventIdRef.current++
+        const detail = `📋 Rule added: "${data.name || '?'}"`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'action' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(s => ({ ...s, rules_count: s.rules_count + 1 }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_rule_notify': {
+        const msg = data.message || data.subject || 'Email notification'
+        appendLog('event', `📧 🔔 ${msg}`, 'email')
+        sendBrowserNotification('TARS // Email Rule', msg)
+        break
+      }
+      case 'email_batch_action': {
+        emailEventIdRef.current++
+        const action = data.action || 'action'
+        const count = data.count || 0
+        const detail = `📦 Batch ${action}: ${count} email${count !== 1 ? 's' : ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'batch_action' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_scheduled': {
+        emailEventIdRef.current++
+        const detail = `⏰ Scheduled: "${data.subject || '?'}" to ${data.to || '?'} at ${data.send_at || '?'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'action' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(s => ({ ...s, scheduled_pending: s.scheduled_pending + 1 }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_scheduled_sent': {
+        emailEventIdRef.current++
+        const detail = `✅ Scheduled email sent: "${data.subject || '?'}" to ${data.to || '?'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'scheduled_sent' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(s => ({ ...s, scheduled_pending: Math.max(0, s.scheduled_pending - 1) }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_action': {
+        emailEventIdRef.current++
+        const action = data.action || 'action'
+        const detail = `📁 ${action}: message #${data.index || '?'}${data.to ? ` → ${data.to}` : ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'action' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_snoozed': {
+        emailEventIdRef.current++
+        const detail = `😴 Snoozed: "${data.subject || '?'}" until ${data.until || '?'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'snoozed' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(s => ({ ...s, snoozed_count: (s.snoozed_count || 0) + 1 }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_resurfaced': {
+        emailEventIdRef.current++
+        const detail = `⏰ Resurfaced: "${data.subject || '?'}" from ${data.sender || '?'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'resurfaced' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(s => ({ ...s, snoozed_count: Math.max(0, (s.snoozed_count || 0) - 1) }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_digest': {
+        emailEventIdRef.current++
+        const detail = `📋 Daily digest generated (${data.sections || '?'} sections)`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'digest' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_ooo_set': {
+        emailEventIdRef.current++
+        const detail = `🏖️ OOO set: ${data.start || '?'} → ${data.end || '?'} (${data.status || 'active'})`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'ooo_set' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(s => ({ ...s, ooo_active: true }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_ooo_replied': {
+        emailEventIdRef.current++
+        const detail = `🏖️ OOO auto-reply → ${data.to || 'unknown'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'ooo_replied' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_ooo_expired':
+      case 'email_ooo_cancelled': {
+        emailEventIdRef.current++
+        const label = type === 'email_ooo_expired' ? 'expired' : 'cancelled'
+        const detail = `🏖️ OOO ${label} — auto-replied to ${data.replied_to_count || 0} sender(s)`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'ooo_expired' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(s => ({ ...s, ooo_active: false }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_followup_overdue': {
+        emailEventIdRef.current++
+        const detail = `📋 ${data.count || '?'} follow-up(s) overdue`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'followup_overdue' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_auto_digest': {
+        emailEventIdRef.current++
+        const detail = `📰 Auto-digest generated for ${data.date || 'today'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'auto_digest' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_clean_sweep': {
+        emailEventIdRef.current++
+        const detail = `🧹 Clean sweep: ${data.archived || 0} archived, ${data.previewed || 0} previewed`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'clean_sweep' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_auto_triage': {
+        emailEventIdRef.current++
+        const detail = `📊 Auto-triaged ${data.count || 0} emails`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'auto_triage' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_unsubscribed': {
+        emailEventIdRef.current++
+        const detail = `🚫 Unsubscribe detected for ${data.sender || 'unknown'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'unsubscribed' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_vip_detected': {
+        emailEventIdRef.current++
+        const detail = `⭐ VIP detected: ${data.contact || 'unknown'} (score: ${data.score || '?'})`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'vip_detected' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'inbox_zero_progress': {
+        emailEventIdRef.current++
+        const detail = `📥 Inbox: ${data.total || 0} emails (${data.trend || 'stable'})`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'inbox_zero_progress' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_security_scan': {
+        emailEventIdRef.current++
+        const detail = `🛡️ Security scan: ${data.risk_level || 'unknown'} risk (score: ${data.phishing_score || 0})`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'security_scan' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'phishing_detected':
+      case 'suspicious_link_found': {
+        emailEventIdRef.current++
+        const detail = `🚨 Phishing alert: ${data.sender || 'unknown sender'} — score ${data.phishing_score || data.count || '?'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'phishing_detected' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'sender_blocked': {
+        emailEventIdRef.current++
+        const detail = `🚫 Sender blocked: ${data.email || 'unknown'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'sender_blocked' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'sender_trusted': {
+        emailEventIdRef.current++
+        const detail = `✅ Sender trusted: ${data.email || 'unknown'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'sender_trusted' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'action_item_extracted': {
+        emailEventIdRef.current++
+        const detail = `📋 ${data.count || 1} action items from: ${data.subject || 'email'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'action_extracted' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'meeting_extracted': {
+        emailEventIdRef.current++
+        const detail = `📅 Meeting found: ${data.subject || 'unknown'} (${data.platform || 'unknown'})`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'meeting_extracted' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'reminder_created':
+      case 'calendar_event_created': {
+        emailEventIdRef.current++
+        const detail = `⏰ ${type === 'reminder_created' ? 'Reminder' : 'Event'}: ${data.title || 'untitled'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'reminder_created' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'action_completed': {
+        emailEventIdRef.current++
+        const detail = `✅ Action completed: ${data.task || data.action_id || 'unknown'}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'action_completed' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'workflow_created': {
+        emailEventIdRef.current++
+        const detail = `🔗 Workflow created: ${data.name || 'unnamed'} (${data.step_count || 0} steps)`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'workflow_created' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'workflow_triggered': {
+        emailEventIdRef.current++
+        const detail = `⚡ Workflow triggered: ${data.name || 'unnamed'} (${data.trigger_reason || 'manual'})`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'workflow_triggered' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'workflow_completed': {
+        emailEventIdRef.current++
+        const detail = `✅ Workflow done: ${data.steps || 0} steps executed`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'workflow_completed' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_composed': {
+        emailEventIdRef.current++
+        const detail = `🖊️ Composed: ${data.tone || 'formal'} tone, ${data.style || 'concise'} style`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'email_composed' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_rewritten': {
+        emailEventIdRef.current++
+        const detail = `✏️ Rewritten: ${data.tone || 'formal'} tone`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'email_rewritten' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_proofread': {
+        emailEventIdRef.current++
+        const detail = `🔍 Proofread: ${data.issues || 0} issues found`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'email_proofread' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_delegated': {
+        emailEventIdRef.current++
+        const detail = `📋 Delegated to ${data.delegate_to || 'someone'}: ${data.subject || ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'email_delegated' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'delegation_completed': {
+        emailEventIdRef.current++
+        const detail = `✅ Delegation completed: ${data.delegation_id || ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'delegation_completed' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'delegation_nudged': {
+        emailEventIdRef.current++
+        const detail = `⏰ Delegation nudged: ${data.delegate_to || ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'delegation_nudged' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'search_index_built': {
+        emailEventIdRef.current++
+        const detail = `🔍 Search index rebuilt: ${data.indexed || 0} emails indexed`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'search_index_built' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_search': {
+        emailEventIdRef.current++
+        const detail = `🔎 Search: ${data.query || ''} (${data.results || 0} results)`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'email_search' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'conversation_recalled': {
+        emailEventIdRef.current++
+        const detail = `💬 Conversation recalled: ${data.contact || ''} (${data.count || 0} emails)`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'conversation_recalled' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_sentiment_analyzed': {
+        emailEventIdRef.current++
+        const detail = `🎭 Sentiment: ${data.label || 'neutral'} (score ${data.score ?? 0}) — ${data.subject || ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'sentiment_analyzed' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_sentiment_alert': {
+        emailEventIdRef.current++
+        const detail = `⚠️ Negative sentiment alert: score ${data.score ?? 0} — ${data.subject || ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'sentiment_alert' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'smart_folder_created': {
+        emailEventIdRef.current++
+        const detail = `📂 Smart folder created: ${data.name || ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'smart_folder_created' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'smart_folder_updated': {
+        emailEventIdRef.current++
+        const detail = `📂 Smart folder updated: ${data.name || data.folder_id || ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'smart_folder_updated' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'thread_summarized': {
+        emailEventIdRef.current++
+        const detail = `📝 Thread summarized: ${data.subject || ''} (${data.message_count || 0} messages)`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'thread_summarized' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'thread_decisions_extracted': {
+        emailEventIdRef.current++
+        const detail = `🔍 Thread decisions: ${data.count || 0} decisions from "${data.subject || ''}"`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'thread_decisions_extracted' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'forward_summary_prepared': {
+        emailEventIdRef.current++
+        const detail = `📤 Forward summary: "${data.subject || ''}" for ${data.recipient || ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'forward_summary_prepared' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'label_added': {
+        emailEventIdRef.current++
+        const detail = `🏷️ Label "${data.label || ''}" added to: ${data.subject || ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'label_added' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(prev => ({ ...prev, labels_count: (prev.labels_count || 0) + 1 }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'newsletters_detected': {
+        emailEventIdRef.current++
+        const detail = `📰 Detected ${data.count || 0} newsletters from ${data.sources || 0} sources`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'newsletters_detected' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'auto_response_created': {
+        emailEventIdRef.current++
+        const detail = `🤖 Auto-response created: "${data.name || ''}" (${data.id || ''})`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'auto_response_created' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(prev => ({ ...prev, auto_responses_active: (prev.auto_responses_active || 0) + 1 }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'signature_created': {
+        emailEventIdRef.current++
+        const detail = `✍️ Signature created: "${data.name || ''}" (${data.sig_id || ''})`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'signature_created' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(prev => ({ ...prev, signatures_count: (prev.signatures_count || 0) + 1 }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'alias_added': {
+        emailEventIdRef.current++
+        const detail = `🎭 Alias added: ${data.email || ''} (${data.display_name || ''})`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'alias_added' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(prev => ({ ...prev, aliases_count: (prev.aliases_count || 0) + 1 }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'emails_exported': {
+        emailEventIdRef.current++
+        const detail = `📦 Exported ${data.count || 0} emails (${data.format || 'json'}) to ${data.file || ''}`
+        setEmailEvents(prev => {
+          const next = [...prev, { id: emailEventIdRef.current, type: 'emails_exported' as const, detail, time, timestamp: Date.now() }]
+          return next.length > 200 ? next.slice(-200) : next
+        })
+        setEmailStats(prev => ({ ...prev, exports_count: (prev.exports_count || 0) + 1 }))
+        appendLog('event', `📧 ${detail}`, 'email')
+        break
+      }
+      case 'email_stats': {
+        setEmailStats(data as EmailStats)
+        break
+      }
+
       default: {
         // Catch any unknown event types and still log them
         const preview = JSON.stringify(data).substring(0, 150)
@@ -458,9 +1091,10 @@ export function TarsProvider({ children }: { children: React.ReactNode }) {
   return (
     <TarsContext.Provider value={{
       connectionState, subsystems, tunnelConnected,
-      tarsProcess, outputLog,
+      tarsProcess, outputLog, initData,
       tasks, thinkingBlocks, messages, actionLog, stats, currentModel,
       memoryContext, memoryPreferences,
+      emailEvents, emailStats,
       startTars, stopTars, killTars, restartTars,
       sendTask, sendMessage, killAgent, updateConfig, saveMemory,
       requestMemory: requestMemoryFn, requestStats: requestStatsFn,

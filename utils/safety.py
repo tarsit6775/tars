@@ -63,6 +63,14 @@ DESTRUCTIVE_PATTERNS = [
     r"\$\([^)]*rm\s",                    # $() substitution with rm
     r"crontab\s+-r",                     # remove all cron jobs
     r"networksetup\s+-setdnsservers",    # DNS hijack
+    # Shell chaining to bypass prefix checks
+    r";\s*(rm|curl|wget|dd|mkfs|shutdown|reboot)",   # semicolon chaining
+    r"\|\s*(bash|sh|zsh|python)",        # pipe-to-shell (generic)
+    r"base64\s+.*-[dD].*\|\s*(bash|sh)", # base64 decode to shell
+    r"python.*-c.*subprocess",           # python subprocess injection
+    r"mv\s+.*~/Library/LaunchAgents",    # persistence via LaunchAgents
+    r"osascript\s+-e.*do\s+shell\s+script", # AppleScript shell escape
+    r"defaults\s+write.*LSUIElement",    # hide app from dock (stealth)
 ]
 
 

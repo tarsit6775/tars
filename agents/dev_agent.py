@@ -446,7 +446,8 @@ class DevAgent(BaseAgent):
 
     def __init__(self, llm_client, model, max_steps=60, phone=None,
                  update_every=5, kill_event=None,
-                 imessage_sender=None, imessage_reader=None):
+                 imessage_sender=None, imessage_reader=None,
+                 fallback_client=None, fallback_model=None):
         super().__init__(
             llm_client=llm_client,
             model=model,
@@ -454,6 +455,8 @@ class DevAgent(BaseAgent):
             phone=phone,
             update_every=update_every,
             kill_event=kill_event,
+            fallback_client=fallback_client,
+            fallback_model=fallback_model,
         )
         self._imessage_sender = imessage_sender
         self._imessage_reader = imessage_reader
@@ -1040,9 +1043,17 @@ class DevAgent(BaseAgent):
     # ===== iMessage =====
 
     def _ask_user(self, message, timeout=300):
-        """Send question via iMessage, wait for reply."""
+        """Send question via iMessage, wait for reply.
+        
+        NOTE: This blocks the agent while the main TARS message loop is also
+        polling for messages, creating contention. Use sparingly.
+        Cap timeout to 60s to avoid stealing messages from the main loop.
+        """
         if not self._imessage_sender or not self._imessage_reader:
-            return "ERROR: iMessage not configured for this session."
+            return "ERROR: iMessage not configured for this session. Use the information available to you and make your best judgment."
+
+        # Cap timeout to avoid long blocks that steal messages from the main loop
+        timeout = min(timeout, 60)
 
         tagged = f"Dev Agent:\n{message}"
         try:
@@ -1058,7 +1069,7 @@ class DevAgent(BaseAgent):
                 user_reply = reply["content"]
                 print(f"    [Dev Agent] User replied: {user_reply[:100]}...")
                 return f"User replied: {user_reply}"
-            return f"No reply received within {timeout}s."
+            return f"No reply within {timeout}s. Proceed with your best judgment using available information."
         except Exception as e:
             return f"ERROR waiting for reply: {e}"
 

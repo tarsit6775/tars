@@ -1,0 +1,32 @@
+[
+  {
+    "id": "test_1",
+    "task": "Say hello",
+    "cron": "0 9 * * *",
+    "schedule_raw": "0 9 * * *",
+    "enabled": true,
+    "created": "2026-02-21T22:24:17.368801",
+    "last_run": null,
+    "run_count": 0
+  },
+  {
+    "id": "t1",
+    "task": "Task A",
+    "cron": "0 9 * * *",
+    "schedule_raw": "0 9 * * *",
+    "enabled": true,
+    "created": "2026-02-21T22:24:17.369924",
+    "last_run": null,
+    "run_count": 0
+  },
+  {
+    "id": "t2",
+    "task": "Task B",
+    "cron": "0 17 * * *",
+    "schedule_raw": "0 17 * * *",
+    "enabled": true,
+    "created": "2026-02-21T22:24:17.370017",
+    "last_run": null,
+    "run_count": 0
+  }
+]

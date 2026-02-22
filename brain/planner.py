@@ -30,10 +30,54 @@ from memory.error_tracker import error_tracker
 logger = logging.getLogger("TARS")
 
 # Tools that depend on previous results — must run sequentially
-DEPENDENT_TOOLS = {"verify_result", "send_imessage", "wait_for_reply", "checkpoint"}
+DEPENDENT_TOOLS = {"verify_result", "send_imessage", "send_imessage_file", "wait_for_reply", "checkpoint"}
 # Tools safe to run in parallel
 PARALLEL_SAFE = {"think", "scan_environment", "recall_memory", "run_quick_command",
                  "quick_read_file", "web_search", "save_memory"}
+
+# ── Progress / ack message blocker ──────────────────────────
+# If the LLM calls send_imessage with one of these, suppress it.
+# The prompt says ZERO progress messages but LLMs sometimes ignore it.
+_PROGRESS_PATTERNS = [
+    r"^(on it|got it|sure|working on it|let me|i.ll|i will|looking into|checking|gimme|give me)[\s.!]*",
+    r"^(searching|processing|analyzing|scanning|running|fetching|pulling|gathering)[\s.!]",
+    r"^(one sec|one moment|hold on|hang on|just a (sec|moment|minute))[\s.!]*",
+    r"^(almost done|still working|making progress|nearly there)[\s.!]*",
+    r"^(i.m (going to|about to|starting|now|currently))[\s]",
+    r"^(let me (check|look|search|find|get|pull|grab|see))[\s]",
+]
+_PROGRESS_RE = [re.compile(p, re.IGNORECASE) for p in _PROGRESS_PATTERNS]
+
+
+def _is_progress_message(text: str) -> bool:
+    """Return True if the message is a progress/ack update that should be suppressed."""
+    text = text.strip()
+    # Very short messages that are just acks
+    if len(text) < 60:
+        for pat in _PROGRESS_RE:
+            if pat.match(text):
+                return True
+    return False
+
+
+class _TaskContext:
+    """Per-task conversation context — enables true brain parallelism.
+    
+    Each concurrent task gets its own conversation history, metacognition
+    monitor, reasoning trace, and loop counters. This avoids the old
+    design where all tasks shared a single conversation_history under
+    a global lock (serializing all parallel work).
+    """
+
+    def __init__(self, compacted_summary=""):
+        self.conversation_history = []
+        self.tool_loop_count = 0
+        self.metacog_loop_count = 0
+        self.reasoning_trace = []
+        self.brain_sent_imessage = False
+        self.applied_fixes = {}
+        self.metacognition = MetaCognitionMonitor()
+        self.compacted_summary = compacted_summary
 
 
 class TARSBrain:
@@ -98,22 +142,24 @@ class TARSBrain:
         # Phase 26: Decision Cache
         self.decision_cache = DecisionCache(base_dir=base_dir)
 
-        # Thread safety: parallel tasks share this brain instance.
-        # The lock serializes process() calls so conversation_history
-        # and metacognition state don't get corrupted.
+        # Thread safety: per-task conversation histories for true parallelism.
+        # _lock only protects shared mutable state (compacted summary, message count).
+        # Each task gets its own _TaskContext via _task_contexts dict.
         self._lock = threading.Lock()
 
-        self.conversation_history = []
+        # Per-task context storage — keyed by thread id (threading.get_ident())
+        self._task_contexts = {}  # {thread_id: _TaskContext}
+        self._task_contexts_lock = threading.Lock()
+
+        # Shared state (protected by _lock)
+        self.conversation_history = []  # Legacy — only used by external accessors
         self.max_history_messages = 80
         self.compaction_token_threshold = 80000
         self._compacted_summary = ""
         self.max_tool_loops = 50
-        self._tool_loop_count = 0
-        self._metacog_loop_count = 0  # Consecutive metacognition loop detections
         self._brain_sent_imessage = False  # Track if brain already notified user
-        self._applied_fixes = {}  # {fix_key: fix_description} — tracks auto-fixes to detect recurrence
 
-        # Phase 28: Reasoning Trace
+        # Phase 28: Reasoning Trace (per-task, but last one kept for accessors)
         self._reasoning_trace = []
 
         self._last_message_time = 0
@@ -141,21 +187,38 @@ class TARSBrain:
         6. Task decomposition (Phase 17)
         7. Dynamic tool pruning (Phase 22)
         8. Build thread context
-        9. Reset metacognition (Phase 34)
+        9. Create per-task context
         10. Think via LLM loop
         11. Structured reflection (Phase 27)
         12. Record response in thread
         13. Proactive anticipation (Phase 29)
         14. Save session state (Phase 33)
         """
-        # Thread safety: serialize brain access for parallel tasks.
-        # Without this, two tasks could corrupt conversation_history,
-        # metacognition state, and reasoning trace simultaneously.
+        # Per-task context: each task gets its own conversation history
+        # and metacognition so multiple tasks can think concurrently.
+        # Only shared state (message_count, compacted_summary) needs the lock.
         with self._lock:
-            return self._process_inner(batch_or_text)
+            compacted = self._compacted_summary
+            # Reset the shared sent-flag so this task's response gets delivered.
+            # Each task tracks its own flag via ctx.brain_sent_imessage.
+            self._brain_sent_imessage = False
+        ctx = _TaskContext(compacted_summary=compacted)
+        tid = threading.get_ident()
+        with self._task_contexts_lock:
+            self._task_contexts[tid] = ctx
+        try:
+            return self._process_inner(batch_or_text, ctx)
+        finally:
+            with self._task_contexts_lock:
+                self._task_contexts.pop(tid, None)
+            # Preserve the last task's trace and sent-flag for external accessors
+            with self._lock:
+                self._reasoning_trace = ctx.reasoning_trace
+                if ctx.brain_sent_imessage:
+                    self._brain_sent_imessage = True
 
-    def _process_inner(self, batch_or_text) -> str:
-        """Inner process logic — called under self._lock."""
+    def _process_inner(self, batch_or_text, ctx) -> str:
+        """Inner process logic — each task has its own _TaskContext."""
         # ── Step 1: Normalize input ──
         from brain.message_parser import MessageBatch
         if isinstance(batch_or_text, MessageBatch):
@@ -181,10 +244,17 @@ class TARSBrain:
         cached = None
         domain_hints = intent.domain_hints if intent and hasattr(intent, 'domain_hints') else []
         if domain_hints:
-            cached = self.decision_cache.lookup(intent.type, domain_hints, text)
+            cache_context = self.decision_cache.lookup_with_context(
+                intent.type, domain_hints, text,
+                complexity=getattr(intent, 'complexity', 'simple'),
+            )
+            cached = cache_context.get("cached_strategy")
             if cached:
                 logger.info(f"  💾 Decision cache hit (reliability {cached.reliability:.0f}%)")
                 event_bus.emit("decision_cache_hit", {"task": text[:100], "reliability": cached.reliability})
+            anti = cache_context.get("anti_patterns", [])
+            if anti:
+                logger.info(f"  ⚠️ Anti-patterns found: {len(anti)}")
 
         # ── Step 5: Multi-query memory recall (Phase 19) ──
         memory_context = ""
@@ -204,11 +274,8 @@ class TARSBrain:
         # ── Step 8: Build thread context ──
         thread_context = self.threads.get_context_for_brain()
 
-        # ── Step 9: Reset metacognition (Phase 34) ──
-        self.metacognition.reset()
-        self._metacog_loop_count = 0
-        self._brain_sent_imessage = False
-        self._reasoning_trace = []
+        # ── Step 9: Reset metacognition on task context (Phase 34) ──
+        ctx.metacognition.reset()
 
         # ── Step 10: Think (LLM loop) ──
         # Inject error warning if we have patterns for this kind of task
@@ -224,17 +291,18 @@ class TARSBrain:
             tools=active_tools,
             error_warning=error_warning,
             cached_decision=cached,
+            ctx=ctx,
         )
 
         # ── Step 11: Structured reflection (Phase 27) ──
-        if self._tool_loop_count > 3:
-            self._structured_reflection(text, response, intent)
+        if ctx.tool_loop_count > 3:
+            self._structured_reflection(text, response, intent, ctx)
 
         # ── Step 12: Record response in thread ──
         self.threads.record_response(response[:500])
 
         # ── Step 13: Record brain-level task outcome for self-improvement ──
-        self._record_brain_outcome(text, response, intent)
+        self._record_brain_outcome(text, response, intent, ctx)
 
         # ── Step 14: Proactive anticipation (Phase 29) ──
         self._proactive_check(text, response, intent)
@@ -260,10 +328,13 @@ class TARSBrain:
     def _think_loop(self, user_message, intent, thread,
                     memory_context="", thread_context="",
                     subtask_plan="", tools=None, error_warning="",
-                    cached_decision=None) -> str:
+                    cached_decision=None, ctx=None) -> str:
         """
         Core LLM thinking loop — v5 with metacognition + reasoning trace.
+        Each call gets its own _TaskContext for true parallelism.
         """
+        if ctx is None:
+            ctx = _TaskContext()
         if tools is None:
             tools = TARS_TOOLS
 
@@ -280,13 +351,15 @@ class TARSBrain:
 
         # ── Conversation continuity ──
         now = time.time()
-        time_since_last = now - self._last_message_time if self._last_message_time else float("inf")
-        self._last_message_time = now
-        self._message_count += 1
+        with self._lock:
+            time_since_last = now - self._last_message_time if self._last_message_time else float("inf")
+            self._last_message_time = now
+            self._message_count += 1
+            compacted = self._compacted_summary
 
-        if time_since_last > self._conversation_timeout and self.conversation_history:
-            logger.info(f"  💭 Conversation gap: {int(time_since_last)}s — soft-resetting context")
-            self._force_compact()
+        if time_since_last > self._conversation_timeout and compacted:
+            gap_display = "∞" if (time_since_last == float("inf") or time_since_last > 1e15) else int(time_since_last)
+            logger.info(f"  💭 Conversation gap: {gap_display}s — starting fresh context")
 
         # ── Inject cached decision hint ──
         hint = ""
@@ -295,24 +368,34 @@ class TARSBrain:
         if error_warning:
             hint += f"\n\n[Error pattern warning: {error_warning}]"
 
-        # ── Add user message to LLM history ──
-        self.conversation_history.append({
+        # ── Add user message to per-task history ──
+        # Cap message length to prevent a single huge paste from blowing context
+        msg_content = (user_message + hint)[:8000]
+        ctx.conversation_history.append({
             "role": "user",
-            "content": user_message + hint,
+            "content": msg_content,
         })
 
         # ── Compact if needed ──
-        self._compact_history()
+        self._compact_history(ctx)
+
+        # Phase 38: Configure metacognition budget awareness
+        ctx.metacognition.set_budget(
+            max_deployments=self.tool_executor.max_deployments,
+            max_tool_loops=self.max_tool_loops,
+        )
 
         # ── Build system prompt ──
         system_prompt = self._build_system_prompt(
             intent, thread_context, memory_context,
             subtask_plan=subtask_plan,
+            compacted_summary=ctx.compacted_summary,
+            ctx=ctx,
         )
 
         # ── LLM thinking loop ──
         retry_count = 0
-        self._tool_loop_count = 0
+        ctx.tool_loop_count = 0
 
         while True:
             # Safety: kill switch
@@ -321,21 +404,28 @@ class TARSBrain:
                 return "🛑 Kill switch activated — stopping all work."
 
             # Safety: max tool loops
-            self._tool_loop_count += 1
-            if self._tool_loop_count > self.max_tool_loops:
+            ctx.tool_loop_count += 1
+            if ctx.tool_loop_count > self.max_tool_loops:
                 event_bus.emit("error", {"message": f"Brain hit max tool loops ({self.max_tool_loops})"})
                 return f"⚠️ Reached maximum {self.max_tool_loops} tool call loops. Task may be partially complete."
 
             # Phase 34: MetaCognition check every iteration
-            metacog = self.metacognition.analyze()
-            injection = self.metacognition.get_injection()
+            metacog = ctx.metacognition.analyze()
+            injection = ctx.metacognition.get_injection()
+
+            # Phase 38: Strategic advice every 5 steps (proactive, not reactive)
+            if not injection and ctx.tool_loop_count % 5 == 0 and ctx.tool_loop_count > 0:
+                advice = ctx.metacognition.get_strategic_advice()
+                if advice:
+                    injection = f"\U0001f4cb STRATEGIC AWARENESS:\n{advice}"
+
             if injection:
-                self.conversation_history.append({
+                ctx.conversation_history.append({
                     "role": "user",
                     "content": injection,
                 })
-                self._reasoning_trace.append({
-                    "step": self._tool_loop_count,
+                ctx.reasoning_trace.append({
+                    "step": ctx.tool_loop_count,
                     "type": "metacognition",
                     "alert": metacog.recommendation or "",
                 })
@@ -347,28 +437,28 @@ class TARSBrain:
 
                 # Force-break if metacognition detects sustained looping
                 if metacog.is_looping:
-                    self._metacog_loop_count += 1
+                    ctx.metacog_loop_count += 1
                     # send_imessage loops are critical — break immediately
-                    if metacog.loop_tool == "send_imessage":
+                    if metacog.loop_tool in ("send_imessage", "send_imessage_file"):
                         logger.warning(f"  🛑 Force-breaking: send_imessage loop detected ({metacog.loop_count} calls)")
                         event_bus.emit("error", {"message": "Force-break: send_imessage loop"})
                         return "⚠️ I detected I was stuck in a messaging loop and stopped. The task may be partially complete."
                     # Other tools: allow 3 consecutive metacognition warnings before force-break
-                    if self._metacog_loop_count >= 3:
-                        logger.warning(f"  🛑 Force-breaking: metacognition detected {self._metacog_loop_count} consecutive loops")
+                    if ctx.metacog_loop_count >= 3:
+                        logger.warning(f"  🛑 Force-breaking: metacognition detected {ctx.metacog_loop_count} consecutive loops")
                         event_bus.emit("error", {"message": "Force-break: sustained tool loop detected"})
                         return "⚠️ I detected I was stuck in a loop and stopped. The task may be partially complete."
                 else:
-                    self._metacog_loop_count = 0
+                    ctx.metacog_loop_count = 0
 
             # ── Call LLM (with error handling + failover) ──
-            response, model = self._call_llm(system_prompt, model, tools=tools)
+            response, model = self._call_llm(system_prompt, model, tools=tools, ctx=ctx)
             if response is None:
                 return "❌ LLM API error — could not get a response after retries."
 
             # ── Process response ──
             assistant_content = response.content
-            self.conversation_history.append({
+            ctx.conversation_history.append({
                 "role": "assistant",
                 "content": assistant_content,
             })
@@ -378,22 +468,22 @@ class TARSBrain:
                 tool_calls = [b for b in assistant_content if b.type == "tool_use"]
 
                 # Phase 28: Log reasoning trace
-                self._reasoning_trace.append({
-                    "step": self._tool_loop_count,
+                ctx.reasoning_trace.append({
+                    "step": ctx.tool_loop_count,
                     "type": "tool_calls",
                     "tools": [tc.name for tc in tool_calls],
                 })
 
-                tool_results = self._execute_tool_calls(tool_calls, retry_count, intent, thread)
+                tool_results = self._execute_tool_calls(tool_calls, retry_count, intent, thread, ctx)
 
                 # Add tool results to conversation
-                self.conversation_history.append({
+                ctx.conversation_history.append({
                     "role": "user",
                     "content": tool_results,
                 })
 
                 # Compact if growing
-                self._compact_history()
+                self._compact_history(ctx)
 
                 # Continue — LLM processes tool results next
                 event_bus.emit("thinking_start", {"model": model})
@@ -409,11 +499,15 @@ class TARSBrain:
                 # ── Gemini empty-response recovery ──
                 # If the LLM returned an empty/very short response after tool calls,
                 # it likely "gave up" mid-task. Re-prompt it to continue.
-                if self._tool_loop_count > 1 and len(final_text.strip()) < 10:
-                    if retry_count < 2:
+                # Exception: if the brain already sent an iMessage, the task is done.
+                if ctx.tool_loop_count > 1 and len(final_text.strip()) < 10:
+                    if ctx.brain_sent_imessage:
+                        logger.info("  ✅ Empty response after send_imessage — task is done.")
+                        final_text = final_text.strip() or "✅ Message sent."
+                    elif retry_count < 2:
                         retry_count += 1
-                        logger.warning(f"  ⚠️ Empty response after {self._tool_loop_count} tool loops — re-prompting LLM (retry {retry_count}/2)")
-                        self.conversation_history.append({
+                        logger.warning(f"  ⚠️ Empty response after {ctx.tool_loop_count} tool loops — re-prompting LLM (retry {retry_count}/2)")
+                        ctx.conversation_history.append({
                             "role": "user",
                             "content": (
                                 "You returned an empty response but the task is not complete yet. "
@@ -425,17 +519,33 @@ class TARSBrain:
                         continue
 
                 # Phase 28: Log final reasoning
-                self._reasoning_trace.append({
-                    "step": self._tool_loop_count,
+                ctx.reasoning_trace.append({
+                    "step": ctx.tool_loop_count,
                     "type": "final_response",
                     "length": len(final_text),
                 })
 
-                if self._tool_loop_count > 3:
+                if ctx.tool_loop_count > 3:
                     event_bus.emit("self_reflection", {
-                        "loops": self._tool_loop_count,
+                        "loops": ctx.tool_loop_count,
                         "response": final_text[:300],
                     })
+
+                # Phase 39: Reasoning quality gate — validate before returning
+                quality = self._check_response_quality(final_text, intent, ctx)
+                if quality.get("needs_retry") and retry_count < 2:
+                    retry_count += 1
+                    logger.warning(f"  ⚠️ Quality gate: {quality['reason']} — re-prompting (retry {retry_count}/2)")
+                    ctx.conversation_history.append({
+                        "role": "user",
+                        "content": quality["nudge"],
+                    })
+                    event_bus.emit("quality_gate", {
+                        "passed": False,
+                        "reason": quality["reason"],
+                    })
+                    event_bus.emit("thinking_start", {"model": model})
+                    continue
 
                 event_bus.emit("task_completed", {"response": final_text[:300]})
                 return final_text
@@ -444,7 +554,7 @@ class TARSBrain:
     #  LLM CALL (with error handling, retry, failover)
     # ═══════════════════════════════════════════════════
 
-    def _call_llm(self, system_prompt, model, tools=None):
+    def _call_llm(self, system_prompt, model, tools=None, ctx=None):
         """
         Make a streaming LLM call with full error handling.
         
@@ -461,13 +571,16 @@ class TARSBrain:
         """
         if tools is None:
             tools = TARS_TOOLS
+        if ctx is None:
+            ctx = _TaskContext()
+        messages = ctx.conversation_history
         call_start = time.time()
 
         try:
             # ── Debug: log message count and last message ──
-            hist_len = len(self.conversation_history)
+            hist_len = len(messages)
             if hist_len > 0:
-                last_msg = self.conversation_history[-1]
+                last_msg = messages[-1]
                 last_role = last_msg.get("role", "?")
                 last_content = last_msg.get("content", "")
                 if isinstance(last_content, str):
@@ -484,7 +597,7 @@ class TARSBrain:
                 max_tokens=8192,
                 system=system_prompt,
                 tools=tools,
-                messages=self.conversation_history,
+                messages=messages,
             ) as stream:
                 for event in stream:
                     if event.type == "content_block_delta":
@@ -497,6 +610,13 @@ class TARSBrain:
 
             call_duration = time.time() - call_start
             self._emit_api_stats(model, response, call_duration)
+
+            # Phase 38: Track token usage for budget awareness
+            if ctx and hasattr(response, 'usage'):
+                ctx.metacognition.record_token_estimate(
+                    response.usage.input_tokens + response.usage.output_tokens
+                )
+
             return response, model
 
         except Exception as e:
@@ -541,18 +661,24 @@ class TARSBrain:
                     "rate_limit", "rate limit", "429", "resource_exhausted"
                 ))
 
-                # Phase 24: Record error pattern
-                self._record_error_pattern("llm_call", error_str, model)
+                # Phase 24: Record LLM error for pattern tracking
+                error_tracker.record_error(
+                    error=f"LLM {error_type}: {error_str[:300]}",
+                    context="llm_call",
+                    tool="llm_call",
+                    source_file="brain/planner.py",
+                    details=f"model={model}, retryable={'rate_limit' if is_rate_limit else error_type}",
+                )
 
                 # ── Strategy 1: Provider failover (instant) ──
                 if is_rate_limit and self._fallback_client and not self._using_fallback:
-                    result, new_model = self._failover_to_fallback(system_prompt, tools=tools)
+                    result, new_model = self._failover_to_fallback(system_prompt, tools=tools, messages=messages)
                     if result is not None:
                         return result, new_model
 
                 # ── Strategy 2: Retry with backoff ──
                 result = self._retry_with_backoff(
-                    system_prompt, model, is_rate_limit, error_type, tools=tools
+                    system_prompt, model, is_rate_limit, error_type, tools=tools, messages=messages
                 )
                 if result is not None:
                     return result, model
@@ -566,23 +692,31 @@ class TARSBrain:
                         max_tokens=8192,
                         system=system_prompt,
                         tools=tools,
-                        messages=self.conversation_history,
+                        messages=messages,
                     )
                     call_duration = time.time() - call_start
                     self._emit_api_stats(model, response, call_duration)
                     logger.info(f"  🔧 Brain: Non-streaming fallback succeeded")
                     return response, model
                 except Exception as e2:
-                    self._record_error_pattern("llm_call", str(e2), model)
+                    error_tracker.record_error(
+                        error=f"LLM non-streaming fallback: {type(e2).__name__}: {e2}",
+                        context="llm_call",
+                        tool="llm_call",
+                        source_file="brain/planner.py",
+                        details=f"model={model}, both streaming and non-streaming failed",
+                    )
                     event_bus.emit("error", {"message": f"LLM API error: {e2}"})
                     self._emergency_notify(str(e2))
 
             return None, model
 
-    def _failover_to_fallback(self, system_prompt, tools=None):
+    def _failover_to_fallback(self, system_prompt, tools=None, messages=None):
         """Switch to fallback LLM provider."""
         if tools is None:
             tools = TARS_TOOLS
+        if messages is None:
+            messages = []
         self._using_fallback = True
         self._degradation_level = 1
         self.client = self._fallback_client
@@ -597,7 +731,7 @@ class TARSBrain:
                 max_tokens=8192,
                 system=system_prompt,
                 tools=tools,
-                messages=self.conversation_history,
+                messages=messages,
             )
             self._emit_api_stats(model, response, 0)
             logger.info(f"  ✅ Fallback provider succeeded: {model}")
@@ -607,11 +741,13 @@ class TARSBrain:
             logger.warning(f"  ⚠️ Fallback also failed: {fb_e}")
             return None, model
 
-    def _retry_with_backoff(self, system_prompt, model, is_rate_limit, error_type, tools=None):
+    def _retry_with_backoff(self, system_prompt, model, is_rate_limit, error_type, tools=None, messages=None):
         """Retry LLM call with exponential backoff."""
         import random as _rand
         if tools is None:
             tools = TARS_TOOLS
+        if messages is None:
+            messages = []
         max_api_retries = 5
 
         for attempt in range(1, max_api_retries + 1):
@@ -634,7 +770,7 @@ class TARSBrain:
                     max_tokens=8192,
                     system=system_prompt,
                     tools=tools,
-                    messages=self.conversation_history,
+                    messages=messages,
                 )
                 self._emit_api_stats(model, response, 0)
                 logger.info(f"  ✅ Retry {attempt} succeeded")
@@ -666,13 +802,15 @@ class TARSBrain:
     #  TOOL EXECUTION
     # ═══════════════════════════════════════════════════
 
-    def _execute_tool_calls(self, tool_calls, retry_count, intent, thread):
+    def _execute_tool_calls(self, tool_calls, retry_count, intent, thread, ctx=None):
         """
         Execute a batch of tool calls — v5 with metacognition + error patterns.
 
         Supports parallel execution for independent tools.
         Records to metacognition, decision cache, and reasoning trace.
         """
+        if ctx is None:
+            ctx = _TaskContext()
         tool_results = []
 
         # ── Parallel execution for independent tools ──
@@ -694,10 +832,23 @@ class TARSBrain:
                     self._emit_tool_result(block, result, exec_duration)
 
                     # Phase 34: Record in metacognition
-                    self.metacognition.record_tool_call(
+                    ctx.metacognition.record_tool_call(
                         block.name, block.input,
                         result.get("success", False), exec_duration
                     )
+
+                    # Phase 35: Track failures in error tracker (parallel path)
+                    # Skip deploy_* tools — executor._deploy_agent() already records those
+                    if not result.get("success") and not block.name.startswith("deploy_"):
+                        error_content = result.get("content", "unknown error")
+                        error_tracker.record_error(
+                            error=error_content,
+                            context=block.name,
+                            tool=block.name,
+                            source_file="brain/planner.py",
+                            details=self._format_error_details(block.name, block.input, error_content),
+                            params=self.tool_executor._safe_params(block.input) if hasattr(self.tool_executor, '_safe_params') else {},
+                        )
 
                     result = self._enrich_failure(result, retry_count)
                     tool_results.append(self._format_tool_result(block, result))
@@ -719,53 +870,79 @@ class TARSBrain:
 
                 # Execute
                 logger.info(f"  🔧 Executing: {tool_name}({tool_input})")
-                exec_start = time.time()
-                result = self.tool_executor.execute(tool_name, tool_input)
-                exec_duration = time.time() - exec_start
+
+                # ── Progress message blocker ──
+                # If the brain calls send_imessage with a progress/ack update,
+                # suppress it and tell the LLM to stop doing that.
+                if tool_name == "send_imessage" and _is_progress_message(tool_input.get("message", "")):
+                    logger.info(f"  🚫 Blocked progress message: {tool_input.get('message', '')[:80]}")
+                    result = {
+                        "success": True,
+                        "content": (
+                            "⚠️ BLOCKED: That was a progress/status update. "
+                            "Abdullah does NOT want progress messages — only FINAL results. "
+                            "Continue working silently and send ONE message when the task is DONE."
+                        ),
+                    }
+                    exec_duration = 0.0
+                else:
+                    exec_start = time.time()
+                    result = self.tool_executor.execute(tool_name, tool_input)
+                    exec_duration = time.time() - exec_start
 
                 self._emit_tool_result(block, result, exec_duration)
 
                 # Phase 34: Record in metacognition
                 success = result.get("success", not result.get("error", False))
-                self.metacognition.record_tool_call(tool_name, tool_input, success, exec_duration)
+                ctx.metacognition.record_tool_call(tool_name, tool_input, success, exec_duration)
+
+                # Phase 38: Parse confidence from think() results
+                if tool_name == "think" and success:
+                    self._parse_and_record_confidence(result.get("content", ""), ctx)
+
+                # Phase 38: Track deployments for budget awareness
+                if success and tool_name.startswith("deploy_"):
+                    ctx.metacognition.record_deployment(
+                        agent_type=tool_name.replace("deploy_", ""),
+                        task=str(tool_input.get("task", ""))[:200],
+                    )
 
                 # Track if brain sent an iMessage (so _run_task doesn't double-send)
-                if tool_name == "send_imessage" and success:
-                    self._brain_sent_imessage = True
+                if tool_name in ("send_imessage", "send_imessage_file") and success:
+                    ctx.brain_sent_imessage = True
 
                 # Phase 24: Record error pattern on failure
                 if not success:
                     error_content = result.get("content", "unknown error")
-                    self._record_error_pattern(
-                        tool_name,
-                        error_content,
-                        str(tool_input)[:200],
-                    )
                     # Feed to self-healing engine for pattern detection
                     self._record_self_heal_failure(
                         tool_name, error_content, str(tool_input)[:200],
                     )
-                    # Phase 35: Error tracker — check for known auto-fixes
-                    fix_info = error_tracker.record_error(
-                        error=error_content,
-                        context=tool_name,
-                        tool=tool_name,
-                        details=str(tool_input)[:200],
-                    )
+                    # Phase 35: Error tracker — skip deploy_* (executor already records)
+                    fix_info = None
+                    if not tool_name.startswith("deploy_"):
+                        fix_info = error_tracker.record_error(
+                            error=error_content,
+                            context=tool_name,
+                            tool=tool_name,
+                            source_file="brain/planner.py",
+                            details=self._format_error_details(tool_name, tool_input, error_content),
+                            params=self.tool_executor._safe_params(tool_input) if hasattr(self.tool_executor, '_safe_params') else {},
+                        )
                     if fix_info and fix_info.get("has_fix"):
                         # Check if this same error recurred after a fix was already suggested
                         fix_key = f"{tool_name}:{error_content[:100]}"
-                        if fix_key in self._applied_fixes:
+                        if fix_key in ctx.applied_fixes:
                             # Fix was already suggested but error recurred — mark it as failed
                             logger.warning(f"🩹 Auto-fix failed — same error recurred: {error_content[:80]}")
                             error_tracker.mark_fix_failed(
                                 error=error_content,
                                 context=tool_name,
                             )
-                            del self._applied_fixes[fix_key]
+                            del ctx.applied_fixes[fix_key]
                         else:
                             # First time suggesting this fix — track it
-                            self._applied_fixes[fix_key] = fix_info["fix"][:200]
+                            ctx.applied_fixes[fix_key] = fix_info["fix"][:200]
                             logger.info(f"🩹 Known fix available: {fix_info['fix'][:80]}")
                             event_bus.emit("auto_fix_available", {
                                 "tool": tool_name,
@@ -774,16 +951,6 @@ class TARSBrain:
                                 "times_applied": fix_info.get("times_applied", 0),
                             })
 
-                # Phase 26: Record in decision cache on success
-                if success and tool_name not in ("think", "scan_environment"):
-                    domain = intent.domain_hints[0] if (intent and intent.domain_hints) else "general"
-                    self.decision_cache.record_success(
-                        intent_type=intent.type if intent else "TASK",
-                        domain=domain,
-                        pattern=tool_name,
-                        tool_sequence=[tool_name],
-                        strategy=f"{tool_name} with {str(tool_input)[:100]}",
-                    )
 
                 # Update decision outcome
                 outcome = "success" if success else "failed"
@@ -852,11 +1019,101 @@ class TARSBrain:
             })
 
     # ═══════════════════════════════════════════════════
+    #  REASONING QUALITY GATE (Phase 39)
+    # ═══════════════════════════════════════════════════
+
+    @staticmethod
+    def _check_response_quality(response: str, intent, ctx) -> dict:
+        """
+        Validate the brain's final response before returning.
+        
+        Catches:
+        - Task responses that forgot to send iMessage
+        - Empty/apology responses when tools succeeded
+        - Responses that don't address the user's question
+        - Brain giving up too early
+        
+        Returns:
+            {"needs_retry": bool, "reason": str, "nudge": str}
+        """
+        text = response.strip()
+        text_lower = text.lower()
+
+        # Skip quality checks for conversation/acknowledgment
+        if intent and intent.type in ("CONVERSATION", "ACKNOWLEDGMENT"):
+            return {"needs_retry": False}
+
+        # Check 1: Task completed but no iMessage sent
+        # If the brain did real work (3+ tool loops) but never sent an iMessage,
+        # it probably forgot to deliver the result to Abdullah.
+        if (intent and intent.is_actionable
+                and ctx.tool_loop_count >= 3
+                and not ctx.brain_sent_imessage):
+            # Check if the response is an internal summary (not user-facing)
+            has_result_keywords = any(w in text_lower for w in [
+                "done", "completed", "finished", "created", "sent", "found",
+                "here's", "result", "success", "ready", "built", "deployed",
+            ])
+            if has_result_keywords:
+                return {
+                    "needs_retry": True,
+                    "reason": "completed_task_no_imessage",
+                    "nudge": (
+                        "You completed the task but FORGOT to send the result to Abdullah "
+                        "via send_imessage. The user NEVER sees your text responses — "
+                        "only iMessages reach them. Send the result NOW."
+                    ),
+                }
+
+        # Check 2: Apology/giving-up when tools had successes
+        apology_patterns = [
+            "i apologize", "i'm sorry", "unfortunately", "i wasn't able",
+            "i couldn't", "i can't", "unable to", "not possible",
+            "i failed to", "i was unable",
+        ]
+        has_apology = any(p in text_lower for p in apology_patterns)
+        if has_apology and ctx.tool_loop_count >= 2:
+            # Check if any tools actually succeeded
+            successful_tools = sum(
+                1 for step in ctx.reasoning_trace
+                if step.get("type") == "tool_calls"
+            )
+            if successful_tools >= 2:
+                return {
+                    "needs_retry": True,
+                    "reason": "apologizing_despite_progress",
+                    "nudge": (
+                        "You said you couldn't do it, but you actually made progress — "
+                        f"you successfully used tools in {successful_tools} steps. "
+                        "Review what you've gathered and compile a useful response. "
+                        "Don't give up — use what you have."
+                    ),
+                }
+
+        # Check 3: Very short response for a complex task
+        if (intent and intent.is_actionable
+                and getattr(intent, 'complexity', 'simple') in ('moderate', 'complex')
+                and len(text) < 30
+                and ctx.tool_loop_count < 3
+                and not ctx.brain_sent_imessage):
+            return {
+                "needs_retry": True,
+                "reason": "too_shallow_for_complexity",
+                "nudge": (
+                    f"This is a {getattr(intent, 'complexity', 'moderate')} task but you responded "
+                    "with a very short answer and barely used any tools. "
+                    "Think deeper — use the appropriate tools to actually accomplish the task."
+                ),
+            }
+
+        return {"needs_retry": False}
+
+    # ═══════════════════════════════════════════════════
     #  SYSTEM PROMPT BUILDER (Phase 5)
     # ═══════════════════════════════════════════════════
 
     def _build_system_prompt(self, intent, thread_context="", memory_context="",
-                             subtask_plan=""):
+                             subtask_plan="", compacted_summary=None, ctx=None):
         """
         Build the system prompt — v5 with subtask plan + metacog injection.
         """
@@ -870,8 +1127,48 @@ class TARSBrain:
         if memory_context:
             full_memory_context = f"{full_memory_context}\n\n## Auto-recalled for this message\n{memory_context}"
 
-        # Phase 34: Metacognition context
-        metacog_context = self.metacognition.get_injection() or ""
+        # Use provided compacted_summary (per-task), fall back to shared
+        summary = compacted_summary if compacted_summary is not None else self._compacted_summary
+
+        # Build metacognition context for system prompt injection
+        metacog_context = ""
+        if ctx:
+            stats = ctx.metacognition.get_stats()
+            if stats.get("total_steps", 0) > 0:
+                parts = []
+                phase = stats.get("phase", "planning")
+                parts.append(f"Phase: {phase}")
+                deploys = stats.get("deployments_used", 0)
+                deploy_budget = stats.get("deployments_budget", 15)
+                if deploys > 0:
+                    parts.append(f"Deployments: {deploys}/{deploy_budget}")
+                diversity = stats.get("tool_diversity", 1.0)
+                if diversity < 0.5:
+                    parts.append(f"Tool diversity: LOW ({diversity:.0%}) — try different tools")
+                progress = stats.get("progress_score", 0.0)
+                if progress > 0:
+                    parts.append(f"Progress: {progress:.0%}")
+                advice = stats.get("strategic_advice", "")
+                if advice:
+                    parts.append(f"Advice: {advice}")
+                metacog_context = " | ".join(parts)
+
+        # Build anti-pattern warnings from decision cache
+        anti_warning = ""
+        if intent and hasattr(intent, 'domain_hints') and intent.domain_hints:
+            anti = self.decision_cache.get_anti_patterns(
+                intent.type, intent.domain_hints,
+                intent.detail or ""
+            )
+            if anti:
+                anti_warning = "\n\n⚠️ KNOWN ANTI-PATTERNS (avoid these):\n" + "\n".join(
+                    f"  ❌ {a}" for a in anti[:3]
+                )
+        if anti_warning:
+            if metacog_context:
+                metacog_context += anti_warning
+            else:
+                metacog_context = anti_warning
 
         return build_system_prompt(
             humor_level=self.config["agent"]["humor_level"],
@@ -879,12 +1176,12 @@ class TARSBrain:
             current_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             active_project=self.memory.get_active_project(),
             memory_context=full_memory_context,
-            max_deploys=8,
+            max_deploys=self.tool_executor.max_deployments,
             intent_type=intent.type if intent else "",
             intent_detail=intent.detail if intent else "",
             domain_hints=intent.domain_hints if intent else [],
             thread_context=thread_context,
-            compacted_summary=self._compacted_summary,
+            compacted_summary=summary,
             session_summary=session_summary,
             subtask_plan=subtask_plan,
             metacog_context=metacog_context,
@@ -900,12 +1197,36 @@ class TARSBrain:
 
     def _auto_recall_multi(self, text: str, intent=None) -> str:
         """
-        Phase 19: Multi-query memory recall.
+        Phase 19+: Smart multi-query memory recall.
 
-        Instead of a single search, generates 2-3 queries from different
-        angles to catch more relevant memories.
+        Generates targeted queries from multiple angles:
+        1. Direct text (first 100 chars)
+        2. Extracted entities (proper nouns, quoted strings)
+        3. Domain-specific keywords (preferences, procedures)
+        4. Action + object patterns
+        5. Entity-specific queries from intent classifier
         """
         queries = [text[:100]]
+
+        # Use entities from intent classifier if available
+        if intent and hasattr(intent, 'entities') and intent.entities:
+            for entity in intent.entities[:3]:
+                if len(entity) > 2:
+                    queries.append(entity)
+
+        # Domain-specific memory queries
+        if intent and hasattr(intent, 'domain_hints'):
+            domain_query_map = {
+                "flights": ["flight preferences", "airlines", "travel"],
+                "email": ["email preferences", "contacts", "email signature"],
+                "dev": ["coding preferences", "tech stack", "repositories"],
+                "accounts": ["account credentials", "passwords", "login"],
+                "reports": ["report format", "report preferences"],
+                "scheduling": ["calendar", "schedule preferences"],
+            }
+            for domain in (intent.domain_hints or []):
+                for dq in domain_query_map.get(domain, []):
+                    queries.append(dq)
 
         # Extract potential entity names (capitalized words)
         words = text.split()
@@ -913,10 +1234,16 @@ class TARSBrain:
         if entities:
             queries.append(" ".join(entities[:5]))
 
+        # Extract quoted strings as exact recall targets
+        import re as _re
+        quoted = _re.findall(r'"([^"]+)"', text)
+        queries.extend(quoted[:2])
+
         # Extract action + object pattern
         action_words = {"find", "search", "create", "build", "fix", "update",
                         "check", "get", "send", "write", "read", "install",
-                        "deploy", "run", "test", "debug", "setup", "configure"}
+                        "deploy", "run", "test", "debug", "setup", "configure",
+                        "book", "order", "schedule", "remind", "track", "monitor"}
         for w in words:
             if w.lower() in action_words:
                 idx = words.index(w)
@@ -929,24 +1256,31 @@ class TARSBrain:
         seen = set()
         results = []
         for q in queries:
-            if q in seen or len(q) < 5:
+            q_lower = q.lower().strip()
+            if q_lower in seen or len(q_lower) < 3:
                 continue
-            seen.add(q)
+            seen.add(q_lower)
             try:
                 result = self.memory.recall(q)
                 if result.get("success") and result.get("content"):
                     content = result["content"]
                     if len(content) > 20 and content != "No memories found.":
-                        results.append(content)
+                        # Avoid duplicate content
+                        if not any(content[:50] in r for r in results):
+                            results.append(content)
             except Exception:
                 pass
+
+            # Cap at 4 results to avoid overwhelming context
+            if len(results) >= 4:
+                break
 
         if not results:
             return ""
 
         # Merge and cap
         merged = "\n---\n".join(results)
-        return merged[:1200]
+        return merged[:1500]
 
     # ═══════════════════════════════════════════════════
     #  CONTEXT MANAGEMENT
@@ -970,55 +1304,90 @@ class TARSBrain:
                         total_chars += len(str(item.input or ""))
         return total_chars // 4
 
-    def _compact_history(self):
+    def _compact_history(self, ctx=None):
         """
         Token-aware compaction: compress old conversation history when
         estimated token usage exceeds threshold.
         
         Keeps last 20 messages intact, summarizes the rest.
+        Operates on per-task context if provided.
         """
-        est_tokens = self._estimate_tokens(self.conversation_history)
-        msg_count = len(self.conversation_history)
+        history = ctx.conversation_history if ctx else self.conversation_history
+        est_tokens = self._estimate_tokens(history)
+        msg_count = len(history)
 
         if est_tokens < self.compaction_token_threshold and msg_count < self.max_history_messages:
             return
 
         keep_count = 20
-        old_messages = self.conversation_history[:-keep_count]
-        recent = self.conversation_history[-keep_count:]
+        old_messages = history[:-keep_count]
+        recent = history[-keep_count:]
 
-        # Build compact summary
-        summary_parts = []
-        for msg in old_messages:
+        # Build compact summary with smart prioritization
+        high_priority = []   # Errors, decisions, deployments — always kept
+        medium_priority = [] # Tool calls, user messages
+        low_priority = []    # Search results, verbose data
+
+        for i, msg in enumerate(old_messages):
             role = msg["role"]
             content = msg["content"]
 
             if role == "user" and isinstance(content, str):
-                summary_parts.append(f"User: {content[:200]}")
+                # First user message (original task) gets full preservation
+                if i == 0:
+                    high_priority.append(f"ORIGINAL TASK: {content[:500]}")
+                elif content.startswith("\u26a0\ufe0f META-COGNITION") or content.startswith("\U0001f4cb STRATEGIC"):
+                    high_priority.append(f"Alert: {content[:200]}")
+                else:
+                    medium_priority.append(f"User: {content[:150]}")
             elif role == "user" and isinstance(content, list):
                 for item in content:
                     if isinstance(item, dict) and item.get("type") == "tool_result":
-                        result_preview = str(item.get("content", ""))[:150]
-                        summary_parts.append(f"Tool result: {result_preview}")
+                        result_text = str(item.get("content", ""))
+                        t_name = item.get("tool_name", "")
+                        if "error" in result_text.lower() or "failed" in result_text.lower():
+                            high_priority.append(f"\u274c {t_name}: {result_text[:300]}")
+                        elif t_name.startswith("deploy_") or t_name in ("generate_report", "send_imessage"):
+                            high_priority.append(f"\u2705 {t_name}: {result_text[:250]}")
+                        elif t_name in ("web_search", "recall_memory", "scan_environment"):
+                            low_priority.append(f"{t_name}: {result_text[:100]}")
+                        else:
+                            medium_priority.append(f"{t_name}: {result_text[:150]}")
             elif role == "assistant":
                 if isinstance(content, list):
                     for block in content:
                         if hasattr(block, "type"):
                             if block.type == "text" and block.text:
-                                summary_parts.append(f"TARS: {block.text[:200]}")
+                                medium_priority.append(f"TARS: {block.text[:200]}")
                             elif block.type == "tool_use":
-                                args_preview = str(block.input)[:100]
-                                summary_parts.append(f"TARS called: {block.name}({args_preview})")
+                                if block.name.startswith("deploy_") or block.name in ("send_imessage", "generate_report"):
+                                    high_priority.append(f"Called: {block.name}({str(block.input)[:150]})")
+                                else:
+                                    medium_priority.append(f"Called: {block.name}({str(block.input)[:80]})")
                 elif isinstance(content, str):
-                    summary_parts.append(f"TARS: {content[:200]}")
+                    medium_priority.append(f"TARS: {content[:200]}")
 
-        self._compacted_summary = "\n".join(summary_parts[-30:])
-        if len(self._compacted_summary) > 4000:
-            head = self._compacted_summary[:500]
-            tail = self._compacted_summary[-(4000 - 500 - 20):]
-            self._compacted_summary = head + "\n... (compacted) ...\n" + tail
+        # Assemble: all high priority + capped medium + capped low
+        summary_parts = list(high_priority)
+        budget = 30 - len(summary_parts)
+        summary_parts.extend(medium_priority[-max(budget // 2, 5):])
+        budget = 30 - len(summary_parts)
+        if budget > 0:
+            summary_parts.extend(low_priority[-budget:])
 
-        self.conversation_history = recent
+        compacted = "\n".join(summary_parts[:30])
+        if len(compacted) > 4000:
+            head = compacted[:500]
+            tail = compacted[-(4000 - 500 - 20):]
+            compacted = head + "\n... (compacted) ...\n" + tail
+
+        if ctx:
+            ctx.compacted_summary = compacted
+            ctx.conversation_history = recent
+        else:
+            self._compacted_summary = compacted
+            self.conversation_history = recent
+
         logger.info(f"  📦 Compacted: {len(old_messages)} msgs (~{est_tokens} tokens) → summary, keeping {len(recent)}")
 
     def _force_compact(self):
@@ -1061,8 +1430,13 @@ class TARSBrain:
     def _emergency_notify(self, error_str):
         """Last-resort: try to send iMessage when the brain crashes."""
         try:
+            # Get the current task's conversation history
+            tid = threading.get_ident()
+            with self._task_contexts_lock:
+                ctx = self._task_contexts.get(tid)
+            history = ctx.conversation_history if ctx else self.conversation_history
             partial = ""
-            for msg in reversed(self.conversation_history):
+            for msg in reversed(history):
                 content = msg.get("content", "")
                 if msg["role"] == "user" and isinstance(content, list):
                     for item in content:
@@ -1159,21 +1533,66 @@ class TARSBrain:
         """
         Break a complex task into subtasks for the thread journal.
         
-        Uses keyword heuristics (no LLM call) to identify sub-steps.
-        Returns a subtask plan string for prompt injection.
+        Uses keyword heuristics + domain analysis (no LLM call).
+        Detects: numbered lists, sequential markers, multi-domain tasks,
+        implicit research→compile→deliver pipelines, and intent subtasks.
         """
         subtasks = []
 
-        # Detect multi-step indicators
-        lines = text.split("\n")
-        numbered = [l.strip() for l in lines if re.match(r"^\d+[\.\)]\s", l.strip())]
-        if numbered:
-            subtasks = numbered[:8]
-        else:
-            # Detect "and" / "then" / "also" splits
+        # Strategy 0: Use intent classifier's multi-task detection
+        if intent and hasattr(intent, 'subtasks') and intent.subtasks:
+            subtasks = intent.subtasks[:8]
+
+        # Strategy 1: Explicit numbered lists
+        if not subtasks:
+            lines = text.split("\n")
+            numbered = [l.strip() for l in lines if re.match(r"^\d+[\.\)]\s", l.strip())]
+            if numbered:
+                subtasks = numbered[:8]
+
+        # Strategy 2: Sequential markers ("then", "also", "after that")
+        if not subtasks:
             parts = re.split(r"\b(?:then|and then|after that|also|next)\b", text, flags=re.IGNORECASE)
             if len(parts) > 1:
                 subtasks = [p.strip() for p in parts if len(p.strip()) > 10][:6]
+
+        # Strategy 3: Multi-domain detection (implicit pipeline)
+        if not subtasks and intent and intent.domain_hints and len(intent.domain_hints) >= 2:
+            domain_tasks = {
+                "research": "Research and gather data",
+                "flights": "Search for flight options",
+                "email": "Send results via email",
+                "dev": "Implement the code changes",
+                "browser": "Complete the web task",
+                "files": "Organize the files",
+                "system": "Configure the system",
+                "accounts": "Handle account setup/login",
+                "reports": "Generate the report/document",
+                "scheduling": "Set up the schedule/reminder",
+                "memory": "Store/recall relevant information",
+                "media": "Handle media playback/control",
+            }
+            for d in intent.domain_hints:
+                if d in domain_tasks:
+                    subtasks.append(domain_tasks[d])
+            if subtasks:
+                subtasks.append("Deliver results to Abdullah via iMessage")
+
+        # Strategy 4: Implicit pipeline (research\u2192report\u2192deliver pattern)
+        if not subtasks:
+            text_lower = text.lower()
+            phases = []
+            if any(w in text_lower for w in ("find", "search", "get", "look up",
+                    "research", "check", "analyze", "compare")):
+                phases.append("Gather data and research")
+            if any(w in text_lower for w in ("report", "excel", "pdf", "spreadsheet",
+                    "chart", "summary", "compile", "presentation")):
+                phases.append("Compile findings into report/document")
+            if any(w in text_lower for w in ("email", "send", "mail", "notify", "share")):
+                phases.append("Deliver via email")
+            if len(phases) >= 2:
+                subtasks = phases
+                subtasks.append("Confirm completion to Abdullah via iMessage")
 
         if not subtasks:
             return ""
@@ -1188,26 +1607,46 @@ class TARSBrain:
         plan = "## Task Breakdown\n"
         for i, st in enumerate(subtasks, 1):
             plan += f"{i}. {st[:200]}\n"
-        plan += "\nWork through these steps in order. Report progress after each.\n"
 
-        event_bus.emit("task_decomposed", {"subtasks": subtasks})
+        # Complexity-aware budget allocation
+        max_deploys = self.tool_executor.max_deployments
+        complexity = getattr(intent, 'complexity', 'simple')
+        if complexity == "complex":
+            plan += f"\n⚠️ COMPLEX TASK — Budget: {max_deploys} deployments. "
+            plan += "Plan carefully. BATCH related items. Don't spend >50% on data gathering.\n"
+        elif len(subtasks) > 2:
+            plan += f"\nBudget: {max_deploys} deployments. "
+            plan += f"Allocate ~{max_deploys // len(subtasks)} per phase. "
+            plan += "Batch related items into single deployments.\n"
+
+        # Urgency annotation
+        urgency = getattr(intent, 'urgency', 0.0)
+        if urgency >= 0.7:
+            plan += "🔴 HIGH URGENCY — prioritize speed over perfection.\n"
+        elif urgency >= 0.4:
+            plan += "🟡 MODERATE URGENCY — balance speed and quality.\n"
+
+        event_bus.emit("task_decomposed", {"subtasks": subtasks, "complexity": complexity})
         return plan
 
     # ═══════════════════════════════════════════════════
     #  STRUCTURED REFLECTION (Phase 27)
     # ═══════════════════════════════════════════════════
 
-    def _structured_reflection(self, task, response, intent):
+    def _structured_reflection(self, task, response, intent, ctx=None):
         """
         Post-task structured reflection — learns from what just happened.
         """
         try:
-            metacog_stats = self.metacognition.get_stats()
+            mc = ctx.metacognition if ctx else self.metacognition
+            metacog_stats = mc.get_stats()
             total_steps = metacog_stats.get("total_steps", 0)
             total_failures = metacog_stats.get("consecutive_failures", 0)
+            loop_count = ctx.tool_loop_count if ctx else 0
+            trace = ctx.reasoning_trace if ctx else self._reasoning_trace
             reflection = {
                 "task": task[:200],
-                "loops": self._tool_loop_count,
+                "loops": loop_count,
                 "total_tool_calls": total_steps,
                 "failures": total_failures,
                 "is_looping": metacog_stats.get("is_looping", False),
@@ -1224,36 +1663,63 @@ class TARSBrain:
                     "reason": "High failure rate",
                     "task": task[:100],
                 })
-            elif self._tool_loop_count > 15:
+            elif loop_count > 15:
                 reflection["quality"] = "slow"
                 event_bus.emit("reflection", {
                     "quality": "slow",
-                    "reason": f"Took {self._tool_loop_count} loops",
+                    "reason": f"Took {loop_count} loops",
                     "task": task[:100],
                 })
             else:
                 reflection["quality"] = "good"
 
-            # Record successful pattern in decision cache
-            if reflection["quality"] != "poor":
-                tool_sequence = []
-                for t in self._reasoning_trace:
-                    if t.get("type") == "tool_calls":
-                        tool_sequence.extend(t.get("tools", []))
-                if tool_sequence:
-                    domain = intent.domain_hints[0] if (intent and intent.domain_hints) else "general"
+            # Record full task strategy in decision cache (not per-tool)
+            tool_sequence = []
+            for t in trace:
+                if t.get("type") == "tool_calls":
+                    tool_sequence.extend(t.get("tools", []))
+
+            if tool_sequence:
+                domain = intent.domain_hints[0] if (intent and intent.domain_hints) else "general"
+                # Deduplicate consecutive same-tools for cleaner sequences
+                deduped = []
+                for t in tool_sequence:
+                    if not deduped or deduped[-1] != t:
+                        deduped.append(t)
+                # Build a meaningful strategy description
+                phases = []
+                if any(t.startswith("deploy_") for t in deduped):
+                    agents = list(dict.fromkeys(t for t in deduped if t.startswith("deploy_")))
+                    phases.append(f"agents: {', '.join(agents)}")
+                if "generate_report" in deduped:
+                    phases.append("compiled report")
+                if "send_imessage" in deduped or "mac_mail" in deduped:
+                    phases.append("delivered results")
+                strategy = f"{' → '.join(phases) if phases else 'direct'} in {loop_count} steps"
+                generalized = self.decision_cache.generalize_pattern(task, intent.domain_hints or [])
+
+                if reflection["quality"] != "poor":
                     self.decision_cache.record_success(
                         intent_type=intent.type if intent else "TASK",
                         domain=domain,
-                        pattern=task[:200],
-                        tool_sequence=tool_sequence[:20],
-                        strategy=f"Completed in {self._tool_loop_count} loops",
+                        pattern=generalized if len(generalized) > 10 else task[:200],
+                        tool_sequence=deduped[:20],
+                        strategy=strategy,
+                        steps=loop_count,
+                        complexity=getattr(intent, 'complexity', 'simple'),
+                    )
+                else:
+                    self.decision_cache.record_failure(
+                        intent_type=intent.type if intent else "TASK",
+                        domain=domain,
+                        pattern=generalized if len(generalized) > 10 else task[:200],
+                        failed_strategy=strategy,
                     )
 
         except Exception as e:
             logger.warning(f"  ⚠️ Reflection error: {e}")
 
-    def _record_brain_outcome(self, task, response, intent):
+    def _record_brain_outcome(self, task, response, intent, ctx=None):
         """
         Record brain-level task outcome to SelfImproveEngine.
 
@@ -1265,7 +1731,9 @@ class TARSBrain:
             if not hasattr(self.tool_executor, 'self_improve'):
                 return
 
-            metacog_stats = self.metacognition.get_stats()
+            mc = ctx.metacognition if ctx else self.metacognition
+            metacog_stats = mc.get_stats()
+            loop_count = ctx.tool_loop_count if ctx else 0
             success = (
                 not response.startswith("❌") and
                 not response.startswith("⚠️") and
@@ -1275,7 +1743,7 @@ class TARSBrain:
             result = {
                 "success": success,
                 "content": response[:500],
-                "steps": self._tool_loop_count,
+                "steps": loop_count,
                 "stuck": metacog_stats.get("is_stalled", False),
                 "stuck_reason": metacog_stats.get("stall_reason", "") if metacog_stats.get("is_stalled") else "",
             }
@@ -1313,28 +1781,56 @@ class TARSBrain:
 
     def _proactive_check(self, task, response, intent):
         """
-        After completing a task, check if there's an obvious follow-up
-        and prepare context for it.
+        After completing a task, analyze what happened and save
+        follow-up hints for the next interaction.
         """
         try:
-            # If task involved code changes, anticipate testing
-            code_tools = {"run_quick_command", "deploy_coder_agent", "deploy_file_agent"}
             trace_tools = set()
             for t in self._reasoning_trace:
                 if t.get("type") == "tool_calls":
                     trace_tools.update(t.get("tools", []))
 
-            if trace_tools & code_tools:
-                event_bus.emit("proactive_hint", {
-                    "hint": "Code was modified — consider testing/verification",
-                    "tools_used": list(trace_tools & code_tools),
-                })
+            hints = []
 
-            # If deployment happened, anticipate health check
-            if "deploy" in task.lower() or "deploy" in response.lower():
-                event_bus.emit("proactive_hint", {
-                    "hint": "Deployment detected — health check recommended",
-                })
+            # Code changes → suggest testing
+            code_tools = {"run_quick_command", "deploy_coder_agent", "deploy_file_agent", "deploy_dev_agent"}
+            if trace_tools & code_tools:
+                hints.append("Code was modified — verification/testing recommended")
+
+            # Deployment → suggest health check
+            if any("deploy" in t for t in trace_tools):
+                if "deploy" in task.lower() or "deploy" in response.lower():
+                    hints.append("Deployment detected — health check recommended")
+
+            # Report generated → follow-up on action items
+            if "generate_report" in trace_tools:
+                hints.append("Report was generated — follow up on action items")
+
+            # Email sent → suggest follow-up tracking
+            if "mac_mail" in trace_tools and "send" in task.lower():
+                hints.append("Email sent — consider setting a follow-up reminder")
+
+            # Account created → verify login
+            if "manage_account" in trace_tools or "deploy_browser_agent" in trace_tools:
+                if any(w in task.lower() for w in ("signup", "sign up", "create account", "register")):
+                    hints.append("Account created — verify login works")
+
+            # Save hints for next interaction context
+            if hints:
+                try:
+                    self.memory.save({
+                        "category": "context",
+                        "key": "proactive_hints",
+                        "value": " | ".join(hints[:3]),
+                    })
+                except Exception:
+                    pass
+
+                for hint in hints:
+                    event_bus.emit("proactive_hint", {
+                        "hint": hint,
+                        "task": task[:100],
+                    })
 
         except Exception:
             pass
@@ -1345,13 +1841,48 @@ class TARSBrain:
     # ═══════════════════════════════════════════════════
 
     def _record_error_pattern(self, context, error_str, details=""):
-        """Record an error pattern via the consolidated error_tracker."""
+        """Record an error pattern via the consolidated error_tracker.
+
+        NOTE: Most call sites now call error_tracker.record_error() directly
+        with richer fields. This wrapper exists for backward compatibility.
+        """
         error_tracker.record_error(
             error=error_str[:500],
             context=context,
             tool=context,
+            source_file="brain/planner.py",
             details=details[:200],
         )
+
+    @staticmethod
+    def _format_error_details(tool_name, tool_input, error_content):
+        """Build a human-readable detail string for the error tracker.
+
+        Instead of raw str(tool_input), produce something actionable like:
+        'web_search query="stock price NVDA" → 403 Forbidden'
+        """
+        parts = [tool_name]
+        if isinstance(tool_input, dict):
+            # Pick the most useful params to show
+            for key in ("query", "task", "command", "url", "file_path",
+                        "recipient", "to", "subject", "path", "search_query"):
+                if key in tool_input:
+                    val = str(tool_input[key])[:100]
+                    parts.append(f'{key}="{val}"')
+                    break
+        # Add error summary
+        err_short = error_content.split("\n")[0][:120] if error_content else ""
+        parts.append(f"→ {err_short}")
+        return " ".join(parts)[:300]
+
+    @staticmethod
+    def _parse_and_record_confidence(text: str, ctx):
+        """Parse confidence scores from think() output and feed to metacognition."""
+        match = re.search(r'(?:confidence|conf)[:\s]+(\d{1,3})\s*%?', text, re.IGNORECASE)
+        if match:
+            score = float(match.group(1))
+            if 0 <= score <= 100:
+                ctx.metacognition.record_confidence(score)
 
     def _get_error_warning(self, task_text):
         """Check error_tracker for known issues relevant to this task."""

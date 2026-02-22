@@ -6,9 +6,23 @@ pyyaml>=6.0
 websocket-client>=1.6.0
 websockets>=12.0
 
-# Report Generation (Excel + PDF)
+# Report Generation (Excel + PDF + Charts)
 openpyxl>=3.1.0
 reportlab>=4.0
+matplotlib>=3.8.0
+
+# Presentations
+python-pptx>=1.0.0
+
+# Voice Interface (microphone + speaker)
+sounddevice>=0.4.6
+numpy>=1.24.0
+
+# Semantic Memory + RAG (vector search)
+chromadb>=0.4.22
+
+# Headless Browser
+playwright>=1.40.0
 
 # macOS Automation (Vision/OCR, Accessibility, Quartz/CGEvent)
 pyobjc-framework-Vision>=12.0

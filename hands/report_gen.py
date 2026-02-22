@@ -329,7 +329,7 @@ def generate_report(format_type, title, headers=None, rows=None, sections=None,
     """Unified report generation. Called by the executor.
     
     Args:
-        format_type: "excel", "pdf", or "csv"
+        format_type: "excel", "pdf", "csv", or "chart"
         title: Report title
         headers: Column headers (for excel/csv/pdf table)
         rows: Data rows (for excel/csv/pdf table)
@@ -346,7 +346,10 @@ def generate_report(format_type, title, headers=None, rows=None, sections=None,
     if format_type in ("excel", "xlsx", "xls"):
         if not headers or not rows:
             return {"success": False, "error": True,
-                    "content": "Excel needs 'headers' and 'rows'"}
+                    "content": ("Excel needs 'headers' (list of column names) and 'rows' "
+                                "(list of lists). Example: headers=['Stock','Price'], "
+                                "rows=[['NVDA','$182'],['AMD','$207']]. "
+                                "Or pass a 'data' dict and it will be auto-converted.")}
         return generate_excel(title, headers, rows, filename, sheet_name, summary)
     
     elif format_type == "pdf":
@@ -361,9 +364,147 @@ def generate_report(format_type, title, headers=None, rows=None, sections=None,
     elif format_type == "csv":
         if not headers or not rows:
             return {"success": False, "error": True,
-                    "content": "CSV needs 'headers' and 'rows'"}
+                    "content": ("CSV needs 'headers' and 'rows'. "
+                                "Or pass a 'data' dict and it will be auto-converted.")}
         return generate_csv(title, headers, rows, filename)
+    
+    elif format_type == "chart":
+        return generate_chart(title, headers, rows, filename, summary)
     
     else:
         return {"success": False, "error": True,
-                "content": f"Unknown format: {format_type}. Use 'excel', 'pdf', or 'csv'."}
+                "content": f"Unknown format: {format_type}. Use 'excel', 'pdf', 'csv', or 'chart'."}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Chart Generation (matplotlib)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def generate_chart(title, headers=None, rows=None, filename=None, chart_options=None):
+    """Generate a chart image (PNG) using matplotlib.
+    
+    Args:
+        title: Chart title
+        headers: Column headers — first column is labels/x-axis, rest are data series
+        rows: Data rows — [[label, val1, val2, ...], ...]
+        filename: Output filename
+        chart_options: Optional dict with:
+            - "chart_type": "bar", "line", "pie", "scatter" (default: "bar")
+            - "xlabel": X-axis label
+            - "ylabel": Y-axis label
+            - "figsize": [width, height] in inches
+    
+    Returns:
+        dict with success, path, and content
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")  # Non-interactive backend
+        import matplotlib.pyplot as plt
+        import matplotlib.ticker as ticker
+    except ImportError:
+        return {"success": False, "error": True,
+                "content": "matplotlib not installed. Run: pip install matplotlib"}
+
+    if not headers or not rows:
+        return {"success": False, "error": True,
+                "content": "Chart needs 'headers' and 'rows'. First column = labels, rest = data series."}
+
+    options = chart_options or {}
+    chart_type = options.get("chart_type", "bar")
+    figsize = options.get("figsize", [12, 7])
+
+    try:
+        # ── Parse data ──
+        labels = [str(r[0]) for r in rows]
+        series_names = headers[1:]  # Skip the label column header
+
+        # Convert values to float (strip $, %, commas)
+        def _to_float(v):
+            if isinstance(v, (int, float)):
+                return float(v)
+            s = str(v).replace("$", "").replace(",", "").replace("%", "").strip()
+            try:
+                return float(s)
+            except ValueError:
+                return 0.0
+
+        series_data = []
+        for col_idx in range(1, len(headers)):
+            series_data.append([_to_float(r[col_idx]) if col_idx < len(r) else 0 for r in rows])
+
+        # ── Style ──
+        plt.style.use("dark_background")
+        fig, ax = plt.subplots(figsize=figsize)
+        fig.patch.set_facecolor("#1A1A2E")
+        ax.set_facecolor("#1A1A2E")
+
+        colors = ["#00D4FF", "#FF6B6B", "#4ECDC4", "#FFE66D", "#A855F7",
+                  "#F97316", "#22D3EE", "#E879F9", "#34D399", "#FB923C"]
+
+        # ── Draw chart ──
+        if chart_type == "bar":
+            import numpy as np
+            x = np.arange(len(labels))
+            width = 0.8 / max(len(series_data), 1)
+            for i, (data, name) in enumerate(zip(series_data, series_names)):
+                offset = (i - len(series_data) / 2 + 0.5) * width
+                bars = ax.bar(x + offset, data, width, label=name,
+                             color=colors[i % len(colors)], alpha=0.9)
+            ax.set_xticks(x)
+            ax.set_xticklabels(labels, rotation=45, ha="right")
+
+        elif chart_type == "line":
+            for i, (data, name) in enumerate(zip(series_data, series_names)):
+                ax.plot(labels, data, marker="o", linewidth=2, label=name,
+                       color=colors[i % len(colors)])
+            plt.xticks(rotation=45, ha="right")
+
+        elif chart_type == "pie":
+            # Use first data series only for pie
+            data = series_data[0] if series_data else []
+            pie_colors = colors[:len(data)]
+            ax.pie(data, labels=labels, colors=pie_colors, autopct="%1.1f%%",
+                  startangle=90, textprops={"color": "white"})
+
+        elif chart_type == "scatter":
+            for i, (data, name) in enumerate(zip(series_data, series_names)):
+                ax.scatter(labels, data, s=100, label=name,
+                          color=colors[i % len(colors)], alpha=0.8)
+            plt.xticks(rotation=45, ha="right")
+
+        # ── Labels & Legend ──
+        ax.set_title(title, fontsize=16, fontweight="bold", color="white", pad=15)
+        if options.get("xlabel"):
+            ax.set_xlabel(options["xlabel"], color="#CCCCCC")
+        if options.get("ylabel"):
+            ax.set_ylabel(options["ylabel"], color="#CCCCCC")
+        if len(series_names) > 1 and chart_type != "pie":
+            ax.legend(facecolor="#2A2A3E", edgecolor="#444", labelcolor="white")
+
+        ax.tick_params(colors="#CCCCCC")
+        for spine in ax.spines.values():
+            spine.set_color("#444")
+        ax.grid(axis="y", alpha=0.2)
+
+        plt.tight_layout()
+
+        # ── Save ──
+        if not filename:
+            safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in title)
+            filename = f"chart_{safe_title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+
+        filepath = os.path.join(REPORT_DIR, filename)
+        fig.savefig(filepath, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.close(fig)
+
+        log.info(f"Chart generated: {filepath}")
+        return {
+            "success": True,
+            "path": filepath,
+            "content": f"Chart '{title}' saved to {filepath} ({chart_type}, {len(rows)} data points)"
+        }
+
+    except Exception as e:
+        plt.close("all")
+        return {"success": False, "error": True, "content": f"Chart generation error: {e}"}

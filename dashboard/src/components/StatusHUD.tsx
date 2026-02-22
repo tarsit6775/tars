@@ -1,5 +1,5 @@
 import { useTars } from '../context/ConnectionContext'
-import { Wifi, WifiOff, Monitor, Brain, Bot, Power, PowerOff } from 'lucide-react'
+import { Wifi, WifiOff, Monitor, Brain, Bot, Power, PowerOff, Mail } from 'lucide-react'
 import clsx from 'clsx'
 
 interface StatusItemProps {
@@ -9,21 +9,21 @@ interface StatusItemProps {
 }
 
 function StatusItem({ label, status, icon }: StatusItemProps) {
-  const color = status === 'connected' || status === 'online' || status === 'reachable' || status === 'active' || status === 'running'
+  const color = status === 'connected' || status === 'online' || status === 'reachable' || status === 'active' || status === 'running' || status === 'monitoring'
     ? 'text-signal-green'
-    : status === 'working' || status === 'reconnecting' || status === 'idle' || status === 'starting'
+    : status === 'working' || status === 'reconnecting' || status === 'idle' || status === 'starting' || status.includes('unread')
     ? 'text-signal-amber'
     : status === 'killed'
     ? 'text-signal-red'
     : 'text-signal-red'
 
-  const dotColor = status === 'connected' || status === 'online' || status === 'reachable' || status === 'active' || status === 'running'
+  const dotColor = status === 'connected' || status === 'online' || status === 'reachable' || status === 'active' || status === 'running' || status === 'monitoring'
     ? 'bg-signal-green'
-    : status === 'working' || status === 'reconnecting' || status === 'idle' || status === 'starting'
+    : status === 'working' || status === 'reconnecting' || status === 'idle' || status === 'starting' || status.includes('unread')
     ? 'bg-signal-amber'
     : 'bg-signal-red'
 
-  const shouldPulse = status === 'working' || status === 'reconnecting' || status === 'active' || status === 'starting'
+  const shouldPulse = status === 'working' || status === 'reconnecting' || status === 'active' || status === 'starting' || status.includes('unread')
 
   return (
     <div className="flex items-center gap-2 px-2 py-1" title={`${label}: ${status}`}>
@@ -44,7 +44,7 @@ function StatusItem({ label, status, icon }: StatusItemProps) {
 }
 
 export default function StatusHUD() {
-  const { subsystems, tunnelConnected, tarsProcess } = useTars()
+  const { subsystems, tunnelConnected, tarsProcess, emailStats } = useTars()
 
   return (
     <div className="flex items-center gap-1 divide-x divide-panel-border">
@@ -67,6 +67,11 @@ export default function StatusHUD() {
         label="Claude"
         status={subsystems.claude}
         icon={<Brain size={13} />}
+      />
+      <StatusItem
+        label="Email"
+        status={emailStats.monitor_active ? (emailStats.unread > 0 ? `${emailStats.unread} unread` : 'monitoring') : 'inactive'}
+        icon={<Mail size={13} />}
       />
     </div>
   )

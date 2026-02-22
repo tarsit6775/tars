@@ -38,6 +38,10 @@ class Intent:
     needs_context: bool = False   # Whether to load thread context
     needs_memory: bool = False    # Whether to auto-recall memory
     domain_hints: List[str] = field(default_factory=list)  # Which domain knowledge to inject
+    complexity: str = "simple"    # simple, moderate, complex — guides planning depth
+    urgency: float = 0.0         # 0.0 (whenever) to 1.0 (right now) — guides prioritization
+    subtasks: List[str] = field(default_factory=list)  # Detected sub-tasks for multi-task messages
+    entities: List[str] = field(default_factory=list)   # Extracted key entities (names, urls, etc.)
 
     @property
     def is_actionable(self) -> bool:
@@ -48,9 +52,17 @@ class Intent:
     def is_conversational(self) -> bool:
         return self.type in ("CONVERSATION", "ACKNOWLEDGMENT")
 
+    @property
+    def is_multi_task(self) -> bool:
+        """Whether this message contains multiple distinct tasks."""
+        return len(self.subtasks) > 1
+
     def __repr__(self):
         domains = f" domains={self.domain_hints}" if self.domain_hints else ""
-        return f"Intent({self.type}, conf={self.confidence:.0%}, {self.detail}{domains})"
+        cx = f" cx={self.complexity}" if self.complexity != "simple" else ""
+        urg = f" urg={self.urgency:.0%}" if self.urgency > 0.2 else ""
+        multi = f" subtasks={len(self.subtasks)}" if self.subtasks else ""
+        return f"Intent({self.type}, conf={self.confidence:.0%}, {self.detail}{domains}{cx}{urg}{multi})"
 
 
 class IntentClassifier:
@@ -209,7 +221,52 @@ class IntentClassifier:
             r"\b(app|application|settings|preferences)\b",
             r"\b(calendar|reminder|note|notes)\b",
         ],
+        "accounts": [
+            r"\b(account|sign.?up|register|login|log.?in|password|credential)\b",
+            r"\b(username|profile|bio|avatar|2fa|otp|verification)\b",
+        ],
+        "reports": [
+            r"\b(report|spreadsheet|excel|csv|pdf|chart|graph|table|summary)\b",
+            r"\b(generate.*report|create.*report|build.*report)\b",
+        ],
+        "memory": [
+            r"\b(remember|forget|recall|preference|save.*memory|store.*memory)\b",
+            r"\b(my.*preference|my.*setting|i (usually|always|prefer|like to))\b",
+        ],
+        "scheduling": [
+            r"\b(schedule|calendar|meeting|appointment|event|alarm|timer)\b",
+            r"\b(at \d{1,2}[: ]\d{2}|tomorrow|tonight|next week|next month)\b",
+            r"\b(every day|daily|weekly|monthly|recurring|cron)\b",
+        ],
+        "media": [
+            r"\b(music|spotify|play|pause|song|album|playlist|video|youtube)\b",
+            r"\b(podcast|stream|watch|listen|movie|show|series)\b",
+        ],
     }
+
+    # ═══════════════════════════════════════════════════
+    #  Urgency Signals
+    # ═══════════════════════════════════════════════════
+
+    URGENCY_PATTERNS = [
+        (r"\b(now|immediately|right now|asap|urgent|hurry)\b", 0.9),
+        (r"\b(quick|quickly|fast|soon|before)\b", 0.5),
+        (r"\b(today|tonight|this morning|this afternoon)\b", 0.4),
+        (r"\b(tomorrow|next week|next month|later|whenever|eventually)\b", 0.1),
+        (r"!", 0.2),  # Exclamation marks add mild urgency
+    ]
+
+    # ═══════════════════════════════════════════════════
+    #  Multi-task Splitting Patterns
+    # ═══════════════════════════════════════════════════
+
+    MULTI_TASK_SPLITTERS = [
+        r"\b(?:and also|and then|then also|also|plus|additionally)\b",
+        r"\b(?:after that|once that.s done|when you.re done|next)\b",
+        r"(?:,\s*(?:and\s+)?(?:also\s+)?(?:then\s+)?)",  # Comma-separated tasks
+        r"(?:\.\s+(?:Also|Then|And|Plus|Next))",  # Sentence-separated
+        r"(?:\d+[\.\)]\s+)",  # Numbered list: "1. do X 2. do Y"
+    ]
 
     # ═══════════════════════════════════════════════════
     #  Main Classification Method
@@ -236,6 +293,18 @@ class IntentClassifier:
         # Detect domain hints for all message types
         domain_hints = self._detect_domains(text_lower)
 
+        # Detect urgency level
+        urgency = self._detect_urgency(text_lower)
+
+        # Extract key entities
+        entities = self._extract_entities(text)
+
+        # Detect multi-task patterns
+        subtasks = self._detect_subtasks(text)
+
+        # Estimate complexity
+        complexity = self._estimate_complexity(text, domain_hints, subtasks)
+
         # ── Priority 1: Emergency (always check first) ──
         emergency_score = self._score_patterns(text_clean, self.EMERGENCY_PATTERNS)
         if emergency_score >= 0.3:
@@ -246,6 +315,9 @@ class IntentClassifier:
                 needs_context=True,
                 needs_memory=True,
                 domain_hints=domain_hints,
+                complexity=complexity,
+                urgency=max(urgency, 0.8),
+                entities=entities,
             )
 
         # ── Priority 2: Acknowledgment (fast path, skip LLM) ──
@@ -272,6 +344,9 @@ class IntentClassifier:
                 needs_context=True,
                 needs_memory=True,
                 domain_hints=domain_hints,
+                complexity=complexity,
+                urgency=urgency,
+                entities=entities,
             )
 
         # ── Priority 4: Follow-up (needs active thread) ──
@@ -284,18 +359,26 @@ class IntentClassifier:
                 needs_context=True,
                 needs_memory=True,
                 domain_hints=domain_hints,
+                complexity=complexity,
+                urgency=urgency,
+                entities=entities,
             )
 
         # ── Priority 5: Task (action required) ──
         task_score = self._score_patterns(text_clean, self.TASK_PATTERNS)
         if task_score >= 0.2:
+            detail = "multi_task" if len(subtasks) > 1 else "action_required"
             return Intent(
                 type="TASK",
                 confidence=min(1.0, task_score + 0.3),
-                detail="action_required",
+                detail=detail,
                 needs_context=True,
                 needs_memory=True,
                 domain_hints=domain_hints,
+                complexity=complexity,
+                urgency=urgency,
+                subtasks=subtasks,
+                entities=entities,
             )
 
         # ── Priority 6: Quick question ──
@@ -307,6 +390,9 @@ class IntentClassifier:
                 detail="info_request",
                 needs_memory=True,
                 domain_hints=domain_hints,
+                complexity=complexity,
+                urgency=urgency,
+                entities=entities,
             )
 
         # ── Priority 7: Conversation ──
@@ -317,6 +403,7 @@ class IntentClassifier:
                 confidence=min(1.0, conv_score + 0.3),
                 detail="casual_chat",
                 domain_hints=domain_hints,
+                entities=entities,
             )
 
         # ── Priority 8: Length-based heuristic ──
@@ -330,6 +417,10 @@ class IntentClassifier:
                 needs_context=True,
                 needs_memory=True,
                 domain_hints=domain_hints,
+                complexity=complexity,
+                urgency=urgency,
+                subtasks=subtasks,
+                entities=entities,
             )
 
         if word_count > 8:
@@ -340,6 +431,7 @@ class IntentClassifier:
                 detail="inferred_medium_length",
                 needs_memory=True,
                 domain_hints=domain_hints,
+                entities=entities,
             )
 
         # ── Default: Conversation (let Brain decide) ──
@@ -348,6 +440,7 @@ class IntentClassifier:
             confidence=0.35,
             detail="ambiguous_short_message",
             domain_hints=domain_hints,
+            entities=entities,
         )
 
     # ═══════════════════════════════════════════════════
@@ -370,17 +463,206 @@ class IntentClassifier:
         return domains
 
     # ═══════════════════════════════════════════════════
+    #  Urgency Detection
+    # ═══════════════════════════════════════════════════
+
+    def _detect_urgency(self, text: str) -> float:
+        """
+        Detect urgency level from temporal markers and emphasis.
+        Returns 0.0 (no urgency) to 1.0 (do it RIGHT NOW).
+        """
+        max_urgency = 0.0
+        for pattern, score in self.URGENCY_PATTERNS:
+            if re.search(pattern, text, re.IGNORECASE):
+                max_urgency = max(max_urgency, score)
+        # Multiple exclamation marks boost urgency
+        excl_count = text.count("!")
+        if excl_count >= 3:
+            max_urgency = max(max_urgency, 0.7)
+        # ALL CAPS words boost urgency
+        caps_words = [w for w in text.split() if w.isupper() and len(w) > 2]
+        if len(caps_words) >= 2:
+            max_urgency = max(max_urgency, 0.6)
+        return min(1.0, max_urgency)
+
+    # ═══════════════════════════════════════════════════
+    #  Entity Extraction
+    # ═══════════════════════════════════════════════════
+
+    def _extract_entities(self, text: str) -> List[str]:
+        """
+        Extract key entities from the message for memory recall and context.
+        Catches: quoted strings, proper nouns, emails, URLs, file paths.
+        """
+        entities = []
+
+        # Quoted strings (highest priority — explicit references)
+        quoted = re.findall(r'"([^"]+)"|\'([^\']+)\'', text)
+        for groups in quoted:
+            for g in groups:
+                if g:
+                    entities.append(g)
+
+        # Email addresses
+        emails = re.findall(r'\S+@\S+\.\S+', text)
+        entities.extend(emails)
+
+        # URLs
+        urls = re.findall(r'https?://\S+', text)
+        entities.extend(urls)
+
+        # File paths
+        paths = re.findall(r'(?:~/|/[\w.-]+/|\./)[\w./-]+', text)
+        entities.extend(paths)
+
+        # Proper nouns (capitalized words not at sentence start, >2 chars)
+        words = text.split()
+        for i, w in enumerate(words):
+            clean = re.sub(r'[^\w]', '', w)
+            if (clean and clean[0].isupper() and len(clean) > 2
+                    and i > 0 and clean.lower() not in self._COMMON_WORDS):
+                entities.append(clean)
+
+        # Airport codes (3 uppercase letters)
+        airport_codes = re.findall(r'\b([A-Z]{3})\b', text)
+        entities.extend(airport_codes)
+
+        # Dollar amounts
+        amounts = re.findall(r'\$[\d,]+(?:\.\d{2})?', text)
+        entities.extend(amounts)
+
+        # Deduplicate preserving order
+        seen = set()
+        unique = []
+        for e in entities:
+            if e.lower() not in seen:
+                seen.add(e.lower())
+                unique.append(e)
+        return unique[:10]  # Cap at 10
+
+    _COMMON_WORDS = frozenset({
+        "the", "and", "for", "are", "but", "not", "you", "all", "can",
+        "her", "was", "one", "our", "out", "has", "have", "had", "its",
+        "will", "would", "could", "should", "may", "might", "shall",
+        "this", "that", "with", "from", "your", "they", "been", "some",
+        "when", "what", "where", "which", "who", "how", "why", "each",
+        "also", "just", "then", "than", "very", "here", "there", "about",
+        "into", "over", "after", "before", "between", "under", "again",
+        "don", "isn", "doesn", "didn", "won", "can", "hey", "please",
+    })
+
+    # ═══════════════════════════════════════════════════
+    #  Multi-task Detection
+    # ═══════════════════════════════════════════════════
+
+    def _detect_subtasks(self, text: str) -> List[str]:
+        """
+        Detect if a message contains multiple distinct tasks.
+        "Search flights to NYC and also email me the report" → 2 subtasks.
+        """
+        # Numbered lists: "1. do X  2. do Y  3. do Z"
+        numbered = re.findall(r'\d+[\.\)]\s+(.+?)(?=\d+[\.\)]|\Z)', text, re.DOTALL)
+        if len(numbered) > 1:
+            return [t.strip() for t in numbered if t.strip()]
+
+        # Split on conjunction + action verb patterns
+        # "do X and also do Y", "send X then create Y"
+        parts = re.split(
+            r'\b(?:and also|and then|then also|also|plus|additionally)\s+(?=[a-z])',
+            text, flags=re.IGNORECASE
+        )
+        if len(parts) > 1:
+            # Verify each part has an action verb
+            action_re = re.compile(
+                r'\b(create|build|make|write|send|email|search|find|deploy|'
+                r'install|setup|book|order|check|update|delete|move|download|'
+                r'research|schedule|remind|generate|track|monitor|fix|debug|run)\b',
+                re.IGNORECASE
+            )
+            valid_parts = [p.strip() for p in parts if action_re.search(p)]
+            if len(valid_parts) > 1:
+                return valid_parts
+
+        # Sentence-split: "Do X. Then do Y. Also do Z."
+        sentences = re.split(r'[.!]\s+', text)
+        if len(sentences) >= 2:
+            action_re = re.compile(
+                r'\b(create|build|make|write|send|email|search|find|deploy|'
+                r'install|setup|book|order|check|update|delete|move|download|'
+                r'research|schedule|remind|generate|track|monitor|fix|debug|run)\b',
+                re.IGNORECASE
+            )
+            action_sentences = [s.strip() for s in sentences if action_re.search(s)]
+            if len(action_sentences) > 1:
+                return action_sentences
+
+        return []
+
+    # ═══════════════════════════════════════════════════
+    #  Complexity Estimation
+    # ═══════════════════════════════════════════════════
+
+    def _estimate_complexity(self, text: str, domains: List[str],
+                             subtasks: List[str]) -> str:
+        """
+        Estimate task complexity: simple, moderate, complex.
+        Drives planning depth and deployment budgeting.
+        """
+        score = 0
+
+        # Multiple domains → more complex
+        score += len(domains) * 15
+
+        # Multiple subtasks → more complex
+        score += len(subtasks) * 20
+
+        # Word count as proxy
+        word_count = len(text.split())
+        if word_count > 50:
+            score += 25
+        elif word_count > 20:
+            score += 10
+
+        # Pipeline indicators (research → compile → deliver)
+        pipeline_words = ["then", "after that", "once done", "and then", "finally",
+                          "report", "email", "send", "compile", "summarize"]
+        pipeline_hits = sum(1 for w in pipeline_words if w in text.lower())
+        score += pipeline_hits * 8
+
+        # Technical depth indicators
+        tech_words = ["api", "database", "deploy", "integrate", "migrate",
+                      "refactor", "architecture", "infrastructure", "pipeline",
+                      "multi-step", "workflow", "automate"]
+        tech_hits = sum(1 for w in tech_words if w in text.lower())
+        score += tech_hits * 10
+
+        if score >= 50:
+            return "complex"
+        elif score >= 20:
+            return "moderate"
+        return "simple"
+
+    # ═══════════════════════════════════════════════════
     #  Scoring Helpers
     # ═══════════════════════════════════════════════════
 
     @staticmethod
     def _score_patterns(text: str, patterns: list) -> float:
-        """Score how many patterns match (0.0 - 1.0)."""
+        """
+        Score how many patterns match, with position weighting.
+        Matches near the start of the message are stronger signals.
+        """
         if not patterns:
             return 0.0
-        matches = sum(1 for p in patterns if re.search(p, text))
-        # Normalize: 1 match = 0.3, 2 = 0.6, 3+ = 0.8+
-        return min(1.0, matches * 0.3)
+        total_score = 0.0
+        for p in patterns:
+            match = re.search(p, text)
+            if match:
+                # Position bonus: match at start → 1.5x, middle → 1.0x, end → 0.8x
+                pos = match.start() / max(len(text), 1)
+                position_weight = 1.5 if pos < 0.2 else (1.0 if pos < 0.6 else 0.8)
+                total_score += 0.3 * position_weight
+        return min(1.0, total_score)
 
     @staticmethod
     def _matches_any(text: str, patterns: list) -> bool:

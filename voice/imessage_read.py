@@ -17,6 +17,8 @@ import time
 import os
 import re
 import queue
+import subprocess
+import json
 from collections import deque
 
 import logging
@@ -28,6 +30,8 @@ class IMessageReader:
         self.phone = config["imessage"]["owner_phone"]
         self.poll_interval = config["imessage"]["poll_interval"]
         self.db_path = os.path.expanduser("~/Library/Messages/chat.db")
+        # Track whether Python sqlite3 has FDA (Full Disk Access)
+        self._use_cli = False
         self._last_message_rowid = self._get_latest_rowid()
         # Idempotent dedup — bounded set of recently processed ROWIDs
         self._seen_rowids = deque(maxlen=1000)
@@ -87,70 +91,164 @@ class IMessageReader:
         """Open a read-only connection to chat.db with timeout."""
         return sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True, timeout=5)
 
+    def _cli_query(self, sql):
+        """Run a SQL query via /usr/bin/sqlite3 CLI (bypasses FDA restrictions).
+        
+        The system sqlite3 binary inherits Terminal.app's Full Disk Access,
+        while Python's sqlite3 module runs under the Python.app binary which
+        may not have FDA. Returns list of rows (each row is a list of strings).
+        """
+        try:
+            result = subprocess.run(
+                ["/usr/bin/sqlite3", "-separator", "|||", self.db_path, sql],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode != 0:
+                return []
+            rows = []
+            for line in result.stdout.strip().split("\n"):
+                if line:
+                    rows.append(line.split("|||"))
+            return rows
+        except Exception:
+            return []
+
     def _get_latest_rowid(self):
         """Get the ROWID of the most recent message."""
+        # Try Python sqlite3 first
         try:
             with self._get_db_connection() as conn:
                 cursor = conn.execute("SELECT MAX(ROWID) FROM message")
                 row = cursor.fetchone()
                 return row[0] if row[0] else 0
         except Exception:
-            return 0
+            pass
+        # Fall back to CLI
+        self._use_cli = True
+        rows = self._cli_query("SELECT MAX(ROWID) FROM message;")
+        if rows and rows[0][0]:
+            try:
+                return int(rows[0][0])
+            except (ValueError, IndexError):
+                pass
+        return 0
 
     def _get_new_messages(self):
         """Check for new messages from the owner's phone number since last check."""
+        if self._use_cli:
+            return self._get_new_messages_cli()
         try:
-            with self._get_db_connection() as conn:
-                # Sanity check: if DB was vacuumed/reset, max ROWID may be lower
-                # than our watermark — reset to avoid missing all messages.
-                cursor = conn.execute("SELECT MAX(ROWID) FROM message")
-                db_max = cursor.fetchone()[0] or 0
-                if db_max > 0 and db_max < self._last_message_rowid - 1000:
-                    logger.warning(f"  ⚠️ chat.db ROWID reset detected (db max: {db_max}, watermark: {self._last_message_rowid}). Resetting.")
-                    self._last_message_rowid = max(0, db_max - 10)  # Catch last 10 messages
-
-                # Fetch both `text` AND `attributedBody` — on modern macOS
-                # the text column is empty and content is in the blob.
-                cursor = conn.execute("""
-                    SELECT m.ROWID, m.text, m.is_from_me, m.date,
-                           m.attributedBody
-                    FROM message m
-                    LEFT JOIN handle h ON m.handle_id = h.ROWID
-                    WHERE m.ROWID > ?
-                      AND h.id = ?
-                      AND m.is_from_me = 0
-                      AND m.associated_message_type = 0
-                    ORDER BY m.ROWID ASC
-                    LIMIT 50
-                """, (self._last_message_rowid, self.phone))
-
-                messages = []
-                for row in cursor.fetchall():
-                    rowid, text, is_from_me, date, attr_body = row
-
-                    # Prefer text column, fall back to attributedBody
-                    body = (text or "").strip()
-                    if not body and attr_body:
-                        body = self._extract_text_from_attributed_body(attr_body) or ""
-
-                    if not body:
-                        continue  # skip truly empty messages
-
-                    # Idempotent: skip any ROWID we've already processed
-                    if rowid in self._seen_rowids:
-                        continue
-                    self._seen_rowids.append(rowid)
-                    messages.append({
-                        "rowid": rowid,
-                        "text": body,
-                        "date": date,
-                    })
-                    self._last_message_rowid = max(self._last_message_rowid, rowid)
-
-                return messages
+            return self._get_new_messages_python()
         except Exception as e:
+            if "unable to open database" in str(e):
+                logger.info("  🔄 Switching to CLI sqlite3 (FDA workaround)")
+                self._use_cli = True
+                return self._get_new_messages_cli()
             logger.warning(f"  ⚠️ Error reading chat.db: {e}")
             return []
+
+    def _get_new_messages_python(self):
+        """Read new messages using Python's sqlite3 module."""
+        with self._get_db_connection() as conn:
+            # Sanity check: if DB was vacuumed/reset, max ROWID may be lower
+            # than our watermark — reset to avoid missing all messages.
+            cursor = conn.execute("SELECT MAX(ROWID) FROM message")
+            db_max = cursor.fetchone()[0] or 0
+            if db_max > 0 and db_max < self._last_message_rowid - 1000:
+                logger.warning(f"  ⚠️ chat.db ROWID reset detected (db max: {db_max}, watermark: {self._last_message_rowid}). Resetting.")
+                self._last_message_rowid = max(0, db_max - 10)
+
+            cursor = conn.execute("""
+                SELECT m.ROWID, m.text, m.is_from_me, m.date,
+                       m.attributedBody
+                FROM message m
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                WHERE m.ROWID > ?
+                  AND h.id = ?
+                  AND m.is_from_me = 0
+                  AND m.associated_message_type = 0
+                ORDER BY m.ROWID ASC
+                LIMIT 50
+            """, (self._last_message_rowid, self.phone))
+
+            messages = []
+            for row in cursor.fetchall():
+                rowid, text, is_from_me, date, attr_body = row
+                body = (text or "").strip()
+                if not body and attr_body:
+                    body = self._extract_text_from_attributed_body(attr_body) or ""
+                if not body:
+                    continue
+                if rowid in self._seen_rowids:
+                    continue
+                self._seen_rowids.append(rowid)
+                messages.append({
+                    "rowid": rowid,
+                    "text": body,
+                    "date": date,
+                })
+                self._last_message_rowid = max(self._last_message_rowid, rowid)
+
+            return messages
+
+    def _get_new_messages_cli(self):
+        """Read new messages using /usr/bin/sqlite3 CLI (FDA workaround).
+        
+        Note: attributedBody (BLOB) cannot be read via CLI, so we only
+        get the text column. On macOS Sequoia+ where text is NULL, we
+        use a secondary hex query + Python parsing as fallback.
+        """
+        sql = f"""
+            SELECT m.ROWID, m.text, m.date
+            FROM message m
+            LEFT JOIN handle h ON m.handle_id = h.ROWID
+            WHERE m.ROWID > {self._last_message_rowid}
+              AND h.id = '{self.phone}'
+              AND m.is_from_me = 0
+              AND m.associated_message_type = 0
+            ORDER BY m.ROWID ASC
+            LIMIT 50;
+        """
+        rows = self._cli_query(sql)
+        messages = []
+        for row in rows:
+            try:
+                rowid = int(row[0])
+                text = row[1] if len(row) > 1 else ""
+                date = row[2] if len(row) > 2 else ""
+
+                body = (text or "").strip()
+
+                # If text column is empty (macOS Sequoia+), try attributedBody via hex
+                if not body:
+                    body = self._read_attributed_body_cli(rowid)
+
+                if not body:
+                    continue
+                if rowid in self._seen_rowids:
+                    continue
+                self._seen_rowids.append(rowid)
+                messages.append({
+                    "rowid": rowid,
+                    "text": body,
+                    "date": date,
+                })
+                self._last_message_rowid = max(self._last_message_rowid, rowid)
+            except (ValueError, IndexError):
+                continue
+        return messages
+
+    def _read_attributed_body_cli(self, rowid):
+        """Read attributedBody blob for a specific message via CLI hex dump."""
+        sql = f"SELECT hex(attributedBody) FROM message WHERE ROWID = {rowid};"
+        rows = self._cli_query(sql)
+        if not rows or not rows[0][0]:
+            return None
+        try:
+            blob = bytes.fromhex(rows[0][0])
+            return self._extract_text_from_attributed_body(blob)
+        except Exception:
+            return None
 
     def push_dashboard_message(self, text):
         """Push a message from the dashboard chat into the reply queue.

@@ -27,20 +27,30 @@ These rules prevent garbled/broken edits. Copilot MUST follow them:
 
 ## Architecture Overview
 
-TARS is an autonomous macOS agent that receives tasks via iMessage (or CLI/dashboard), plans with LLMs (multi-provider: Gemini, Groq, Claude), and executes using macOS system tools. The architecture is a **think → act loop**:
+TARS is an autonomous macOS agent (v5.0) that receives tasks via iMessage, voice, CLI, or cloud dashboard. It plans with LLMs (multi-provider), executes via macOS system tools, and self-improves from errors.
 
 ```
-User (iMessage/CLI/Dashboard)
-  → tars.py (orchestrator, main loop)
-    → brain/planner.py (LLM streaming + tool-use loop)
+User (iMessage / Voice / CLI / Cloud Dashboard)
+  → tars.py (orchestrator, main loop, parallel task dispatch)
+    → brain/intent.py (rule-based classifier — ZERO LLM tokens)
+    → brain/threads.py (conversation threading + task decomposition)
+    → brain/planner.py (LLM streaming + tool-use loop per TaskContext)
+      → brain/metacognition.py (real-time loop/waste detection, corrective nudges)
+      → brain/decision_cache.py (reuse proven intent→plan→tool sequences)
       → executor.py (routes tool calls to handlers)
-        → hands/* (terminal, files, browser, mac control)
-        → voice/* (iMessage read/write via AppleScript + chat.db)
-        → memory/* (context, preferences, history in flat files)
-      → agents/* (sub-agents: browser, coder, file, research, system)
+        → hands/* (terminal, files, browser, mac control, email, environment, ...)
+        → voice/* (iMessage read/write, voice interface)
+        → memory/* (flat files, semantic memory via ChromaDB)
+        → utils/mcp_client.py (external MCP tool servers)
+      → agents/* (sub-agents: browser, coder, dev, file, research, screen, system, email)
   → server.py (dashboard: HTTP :8420, WebSocket :8421)
-  → utils/event_bus.py (singleton EventBus — every action emits events for the dashboard)
+  → tunnel.py + relay/ (cloud access via Railway — WebSocket tunnel to Mac)
+  → utils/scheduler.py (cron-style proactive autonomous tasks)
+  → utils/watchdog.py (health monitoring, stuck-task killing)
+  → utils/event_bus.py (singleton EventBus — every action emits events)
 ```
+
+**Message processing pipeline**: User message → `intent.py` classifies (TASK/CONVERSATION/FOLLOW_UP/etc.) with zero LLM cost → `threads.py` routes to conversation thread → `planner.py` creates a `TaskContext` (per-task conversation history enabling parallel tasks) → LLM tool-use loop → `executor.py` dispatches → `metacognition.py` monitors for loops/waste.
 
 ---
 
@@ -104,8 +114,11 @@ Config is a dict loaded from `config.yaml` once at startup. Accessed via:
 config["section"]["key"]                              # required keys
 config.get("optional_section", {}).get("key", default) # optional keys
 ```
-- Multi-provider LLM: `brain_llm`, `agent_llm`, `fallback_llm` — each has `provider`, `api_key`, `model`.
+- `llm` — default provider config with `provider`, `api_key`, `heavy_model`, `fast_model` (used for agents)
+- `brain_llm` — orchestrator override (set via env `TARS_BRAIN_API_KEY` or config)
+- `agent_llm` — optional agent-specific override (from `config["agent_llm"]`)
 - Env var overrides exist for secrets (see `tars.py`).
+- See `config.example.yaml` for all sections: `relay`, `daily_improvement`, `voice`, `scheduler`, `environment`, `mcp`, `home_automation`, `image_generation`.
 
 ### Async vs Sync
 - **Everything is synchronous** except `server.py` (WebSocket server uses `asyncio`/`websockets`).
@@ -117,9 +130,13 @@ config.get("optional_section", {}).get("key", default) # optional keys
 ## Multi-Provider LLM Architecture
 
 The project supports multiple LLM providers via `brain/llm_client.py`:
-- `brain_llm` — orchestrator/planner (Gemini 2.5 Flash)
-- `agent_llm` — sub-agents (Groq / Llama)
-- `fallback_llm` — auto-switch when brain_llm is rate-limited
+- **Anthropic** (Claude) — native SDK
+- **Gemini** (Google) — google-genai SDK
+- **Groq**, **Together**, **OpenRouter**, **DeepSeek** — OpenAI-compatible
+- **OpenAI** — native SDK
+- Any custom `base_url` provider
+
+All responses are normalized to Anthropic's format (content blocks with `type: "text"` / `type: "tool_use"`), so `planner.py` and agents don't care which provider is active.
 
 **When editing LLM code**: the client abstracts provider differences. Don't add provider-specific logic outside `llm_client.py`.
 
@@ -172,36 +189,113 @@ error_tracker.get_error_report()   # Human-readable report
 
 ## Sub-Agent System (`agents/`)
 
-- `base_agent.py` — base class. All agents inherit from it.
+- `base_agent.py` — base class. All agents inherit from it. Contains loop detection, dispatch budgets, context trimming, parallel tool caps.
 - Agents have their own tool sets defined in `agent_tools.py`.
 - Agent `run()` returns a result dict — different shape from tool handlers (agents have their own output format).
 - Agents are invoked from `executor.py` when a tool like `web_task` or `code_task` is called.
+- **8 agent types**: `browser` (Chrome CDP), `coder` (code generation), `dev` (VS Code Agent Mode orchestrator), `file` (file operations), `research` (web/API research), `screen` (vision-driven Mac control via screenshots + Gemini), `system` (OS tasks), `email` (199 email tools).
+- `comms.py` — inter-agent communication hub (message passing, structured scratchpad with typed data).
+- `hands/browser_agent.py` exists separately from `agents/browser_agent.py` — the `hands/` version is a simpler single-task browser agent; the `agents/` version is the full sub-agent with loop detection.
 
 ---
 
 ## File-by-File Quick Reference
 
+### Core
 | File | Purpose | Key exports |
 |---|---|---|
-| `tars.py` | Main entry, orchestrator loop | `TARS` class |
+| `tars.py` | Main entry, orchestrator loop, parallel task dispatch | `TARS` class |
 | `executor.py` | Routes tool calls → handlers | `ToolExecutor._dispatch()` |
-| `brain/planner.py` | LLM conversation loop | `TARSBrain.think()` |
-| `brain/tools.py` | Tool schemas (Anthropic format) | `TARS_TOOLS` list |
-| `brain/prompts.py` | System prompt template | `TARS_SYSTEM_PROMPT` |
-| `brain/llm_client.py` | Multi-provider LLM client | `LLMClient` |
-| `hands/terminal.py` | Shell command execution | `run_terminal()` |
-| `hands/browser.py` | AppleScript Chrome control | `Browser` class |
-| `hands/file_manager.py` | File read/write/search | `read_file()`, `write_file()` |
-| `hands/mac_control.py` | macOS GUI control | `mac_control()` |
-| `hands/email.py` | Unified email backend (Mail.app + SMTP) | `send_email()`, `read_inbox()`, `inbox_monitor`, `add_email_rule()`, `summarize_inbox()`, `categorize_inbox()`, `get_email_thread()`, `schedule_email()`, `batch_mark_read()`, `send_quick_reply()`, `suggest_replies()`, `get_email_stats()`, `add_contact()`, `list_contacts()`, `search_contacts()`, `auto_learn_contacts()`, `snooze_email()`, `list_snoozed()`, `cancel_snooze()`, `priority_inbox()`, `get_sender_profile()`, `generate_daily_digest()`, `set_ooo()`, `cancel_ooo()`, `get_ooo_status()`, `get_email_analytics()`, `get_email_health()`, `clean_sweep()`, `auto_triage()`, `inbox_zero_status()`, `smart_unsubscribe()`, `build_attachment_index()`, `search_attachments()`, `attachment_summary()`, `list_saved_attachments()`, `score_relationships()`, `auto_detect_vips()`, `get_relationship_report()`, `communication_graph()`, `decay_stale_contacts()`, `scan_email_security()`, `check_sender_trust()`, `scan_links()`, `get_security_report()`, `add_trusted_sender()`, `add_blocked_sender()`, `list_trusted_senders()`, `list_blocked_senders()`, `extract_action_items()`, `extract_meeting_details()`, `scan_inbox_actions()`, `create_reminder_from_email()`, `create_calendar_event()`, `list_extracted_actions()`, `complete_action()`, `get_action_summary()`, `create_workflow()`, `list_workflows()`, `get_workflow()`, `delete_workflow()`, `toggle_workflow()`, `run_workflow_manual()`, `get_workflow_templates()`, `create_workflow_from_template()`, `get_workflow_history()`, `smart_compose()`, `rewrite_email()`, `adjust_tone()`, `suggest_subject_lines()`, `proofread_email()`, `compose_reply_draft()`, `delegate_email()`, `list_delegations()`, `update_delegation()`, `complete_delegation()`, `cancel_delegation()`, `delegation_dashboard()`, `nudge_delegation()`, `contextual_search()`, `build_search_index()`, `conversation_recall()`, `search_by_date_range()`, `find_related_emails()`, `analyze_sentiment()`, `batch_sentiment()`, `sender_sentiment()`, `sentiment_alerts()`, `sentiment_report()`, `create_smart_folder()`, `list_smart_folders()`, `get_smart_folder()`, `update_smart_folder()`, `delete_smart_folder()`, `pin_smart_folder()`, `summarize_thread()`, `thread_decisions()`, `thread_participants()`, `thread_timeline()`, `prepare_forward_summary()`, `add_label()`, `remove_label()`, `list_labels()`, `get_labeled_emails()`, `bulk_label()`, `detect_newsletters()`, `newsletter_digest()`, `newsletter_stats()`, `newsletter_preferences()`, `apply_newsletter_preferences()`, `create_auto_response()`, `list_auto_responses()`, `update_auto_response()`, `delete_auto_response()`, `toggle_auto_response()`, `auto_response_history()`, `create_signature()`, `list_signatures()`, `update_signature()`, `delete_signature()`, `set_default_signature()`, `get_signature()`, `add_alias()`, `list_aliases()`, `update_alias()`, `delete_alias()`, `set_default_alias()`, `export_emails()`, `export_thread()`, `backup_mailbox()`, `list_backups()`, `search_exports()`, `get_export_stats()`, `create_template()`, `list_templates()`, `get_template()`, `update_template()`, `delete_template()`, `use_template()`, `save_draft()`, `list_drafts()`, `get_draft()`, `update_draft()`, `delete_draft()`, `create_mail_folder()`, `list_mail_folders()`, `rename_mail_folder()`, `delete_mail_folder()`, `move_to_folder()`, `get_folder_stats()`, `track_email()`, `list_tracked_emails()`, `get_tracking_status()`, `tracking_report()`, `untrack_email()`, `batch_archive()`, `batch_reply()`, `batch_label()`, `email_to_event()`, `list_email_events()`, `upcoming_from_email()`, `meeting_conflicts()`, `sync_email_calendar()`, `email_dashboard()`, `weekly_report()`, `monthly_report()`, `productivity_score()`, `email_trends()` |
-| `agents/email_agent.py` | Dedicated email agent (199 tools) | `EmailAgent` class |
-| `voice/imessage_send.py` | Send iMessage via AppleScript | `send_imessage()`, `send_file()` |
-| `voice/imessage_read.py` | Poll `chat.db` for new msgs | `check_messages()` |
-| `utils/event_bus.py` | Global event singleton | `event_bus` |
-| `utils/safety.py` | Destructive command detection | `is_destructive()` |
+| `tars_runner.py` | 24/7 service runner — auto-restart on crash, file-change reload | — |
+| `tunnel.py` | Connects local Mac to cloud relay (WebSocket) | — |
 | `server.py` | Dashboard HTTP + WebSocket | Ports 8420/8421 |
-| `memory/memory_manager.py` | Flat-file memory ops | `MemoryManager` |
-| `memory/error_tracker.py` | Error log + fix registry | `error_tracker` singleton |
+| `healthcheck.py` | Quick import + subsystem verification | — |
+
+### Brain (`brain/`)
+| File | Purpose | Key exports |
+|---|---|---|
+| `planner.py` | LLM conversation loop (one `TaskContext` per task) | `TARSBrain.think()` |
+| `tools.py` | Tool schemas (Anthropic JSON format) | `TARS_TOOLS` list |
+| `prompts.py` | System prompt template | `TARS_SYSTEM_PROMPT` |
+| `llm_client.py` | Multi-provider LLM client (normalizes to Anthropic format) | `LLMClient` |
+| `intent.py` | Rule-based intent classifier (zero LLM tokens) | `classify_intent()`, `Intent` |
+| `threads.py` | Conversation threading + task decomposition | `ThreadManager`, `TaskContext` |
+| `metacognition.py` | Real-time loop/waste detection, corrective nudges | `MetacognitionMonitor` |
+| `decision_cache.py` | Cache proven intent→plan→tool sequences (30-day TTL) | `DecisionCache` |
+| `message_parser.py` | iMessage batching, correction logic | `MessageStreamParser` |
+| `self_heal.py` | Proposes code fixes for recurring errors | `SelfHealEngine` |
+| `self_improve.py` | Post-task review + pattern learning | `SelfImprover` |
+| `daily_improve.py` | Midnight analysis → improvement proposals → auto-deploy | `DailyImprover` |
+
+### Hands (`hands/`) — Tool Handlers
+| File | Purpose | Key exports |
+|---|---|---|
+| `terminal.py` | Shell command execution | `run_terminal()` |
+| `browser.py` | CDP-based Chrome control (human-like typing/clicking) | `Browser` class |
+| `cdp.py` | Raw Chrome DevTools Protocol WebSocket | `CDPConnection` |
+| `file_manager.py` | File read/write/search | `read_file()`, `write_file()` |
+| `mac_control.py` | macOS GUI control (AppleScript) | `mac_control()` |
+| `email.py` | Unified email backend (Mail.app + SMTP, 199 functions) | `send_email()`, `read_inbox()`, ... |
+| `environment.py` | macOS workspace manager (screens, DND, windows, clipboard) | `setup_environment()` |
+| `captcha_solver.py` | Free CAPTCHA solver via Gemini vision LLM | `solve_captcha()` |
+| `credential_gen.py` | Password/username/form-data generator | `generate_password()` |
+| `account_manager.py` | Site-specific signup playbooks + OTP reader | `manage_account()` |
+| `research_apis.py` | Serper, Wikipedia, Yahoo Finance, arXiv, etc. | Plain string returns (NOT dict) |
+| `flight_search.py` | Google Flights URL builder/parser, airline deep links | Flight search pipeline |
+| `report_gen.py` | Excel/PDF/HTML report generation | `generate_report()` |
+| `pptx_gen.py` | PowerPoint generation via python-pptx | `create_presentation()` |
+| `image_gen.py` | DALL-E 3 image generation | `generate_image()` |
+| `media_processor.py` | FFmpeg + Whisper (transcribe, convert, trim) | `process_media()` |
+| `headless_browser.py` | Playwright-based headless browser (no user Chrome) | — |
+| `home_automation.py` | Home Assistant REST API integration | `HomeAutomation` |
+
+### Agents (`agents/`)
+| File | Purpose | Key exports |
+|---|---|---|
+| `base_agent.py` | Base class (loop detection, dispatch budgets, context trimming) | `BaseAgent` |
+| `browser_agent.py` | Full browser sub-agent with CDP tools | `BrowserAgent` |
+| `research_agent.py` | Web/API research agent | `ResearchAgent` |
+| `coder_agent.py` | Code generation agent | `CoderAgent` |
+| `dev_agent.py` | VS Code Agent Mode orchestrator (Claude Opus) | `DevAgent` |
+| `file_agent.py` | File operations agent | `FileAgent` |
+| `system_agent.py` | macOS system tasks agent | `SystemAgent` |
+| `screen_agent.py` | Vision-driven Mac control (screenshot + Gemini LLM) | `ScreenAgent` |
+| `email_agent.py` | Dedicated email agent (199 tools) | `EmailAgent` |
+| `comms.py` | Inter-agent communication hub | `AgentComms` |
+| `agent_tools.py` | Per-agent tool set definitions | — |
+
+### Voice (`voice/`)
+| File | Purpose | Key exports |
+|---|---|---|
+| `imessage_send.py` | Send iMessage (text + file attachments via Finder-paste) | `send_imessage()`, `send_file()` |
+| `imessage_read.py` | Poll `chat.db` for new messages | `check_messages()` |
+| `voice_interface.py` | Full-duplex voice mode (Whisper STT + macOS/OpenAI TTS) | `VoiceInterface` |
+
+### Memory (`memory/`)
+| File | Purpose | Key exports |
+|---|---|---|
+| `memory_manager.py` | Flat-file memory ops | `MemoryManager` |
+| `error_tracker.py` | Error log + fix registry | `error_tracker` singleton |
+| `agent_memory.py` | Per-agent persistent learning (success/failure patterns) | `AgentMemory` |
+| `semantic_memory.py` | Vector-based semantic memory (ChromaDB + RAG) | `SemanticMemory` |
+
+### Utils (`utils/`)
+| File | Purpose | Key exports |
+|---|---|---|
+| `event_bus.py` | Global event singleton | `event_bus` |
+| `safety.py` | Destructive command detection | `is_destructive()` |
+| `agent_monitor.py` | Real-time multi-agent state tracker | `agent_monitor` singleton |
+| `scheduler.py` | Cron-style autonomous task scheduling | `task_scheduler` singleton |
+| `watchdog.py` | Health monitoring, stuck-task killing | `HealthWatchdog` |
+| `mcp_client.py` | MCP (Model Context Protocol) client for external tools | `MCPClient` |
+| `logger.py` | Structured logging (console + rotating file, 5MB/3 backups) | `setup_logger()` |
+
+### Relay (`relay/`) — Cloud Access
+| File | Purpose |
+|---|---|
+| `relay/server.py` | FastAPI cloud relay on Railway (JWT auth, WebSocket tunneling) |
+| `relay/Dockerfile` | Railway deployment container |
+| `relay/static/` | Built dashboard assets served by the relay |
 
 ---
 
@@ -221,10 +315,17 @@ error_tracker.get_error_report()   # Human-readable report
 cd tars && source venv/bin/activate
 python tars.py                    # Start (waits for iMessage)
 python tars.py "do something"     # Start with initial task
-python test_systems.py            # Smoke test all modules
+python tars_runner.py             # 24/7 service (auto-restart, file-change reload)
+python tunnel.py                  # Connect to cloud relay
+python healthcheck.py             # Quick smoke test (imports + subsystems)
+python test_systems.py            # Full module smoke tests
 ```
 
-Dashboard: `http://localhost:8420` (HTTP) + WebSocket on `:8421`.
+Dashboard: `http://localhost:8420` (local) — Cloud: via `relay/` on Railway.
+
+**launchd service** (`com.tars.agent.plist`): `launchctl load/unload` for 24/7 auto-start on login.
+
+**Tests**: `tests/` has 35+ files — `test_base_agent.py`, `test_cdp.py`, `test_email_phase*.py`, `test_browsing.py`, etc. Run individually with `python tests/test_*.py`.
 
 ---
 
@@ -240,7 +341,8 @@ Dashboard: `http://localhost:8420` (HTTP) + WebSocket on `:8421`.
 
 - React + TypeScript + Vite + Tailwind
 - State managed via WebSocket context (`context/ConnectionContext.tsx`)
-- Components are in `dashboard/src/components/`
+- **Pages**: `Analytics`, `Email`, `Login`, `Memory` + main dashboard
+- **Key components**: `ActionLog`, `BootSequence`, `ConsoleOutput`, `KillSwitch`, `MessagePanel`, `ProcessControl`, `StatusHUD`, `TaskPanel`, `ThinkingStream`
 - **When editing dashboard**: preserve TypeScript types, don't use `any` unless absolutely necessary.
 
 ---
@@ -248,10 +350,13 @@ Dashboard: `http://localhost:8420` (HTTP) + WebSocket on `:8421`.
 ## 🚨 Known Pitfalls (Don't repeat these)
 
 1. **browser.py functions return mixed types** — some return raw strings, some return the standard dict. The browser_agent handles this with `isinstance()` checks. Don't assume browser functions return the standard dict.
-2. **`conversation_history` is a plain list** — mutated from the main thread. Don't access it from other threads without care.
+2. **`research_apis.py` returns plain strings** — NOT the standard `{"success", "content"}` dict. These functions are called directly by `ResearchAgent`, not through the executor. Don't wrap them in dict format.
 3. **Agent `run()` vs tool handler return** — agents return their own shape (with `final_response`, etc.), NOT `{"success", "content"}`. The executor wraps it.
-4. **AppleScript strings need escaping** — backslashes, quotes, and Unicode can break `osascript` calls. Always escape properly.
-5. **`config.yaml` has API keys** — never print config to logs or dashboard events. It's in `.gitignore` but be careful.
+4. **`TaskContext` per task** — `brain/threads.py` provides `TaskContext` for parallel task isolation. Each concurrent task gets its own conversation history, metacognition monitor, and loop counters. Don't use a shared `conversation_history` list.
+5. **AppleScript strings need escaping** — backslashes, quotes, and Unicode can break `osascript` calls. Always escape properly.
+6. **`config.yaml` has API keys** — never print config to logs or dashboard events. It's in `.gitignore` but be careful.
+7. **CSS selectors for React IDs** — React generates IDs with colons (`:r1:`). Never use `CSS.escape()` for selectors passing through LLM tool calls — use `[id="..."]` attribute selectors instead (see Lessons Learned 2026-02-21).
+8. **Google-first navigation for browser agents** — never give browser agents direct signup/login URLs. Always search Google first to create natural referrer chains (see Lessons Learned 2026-02-21).
 
 ---
 
@@ -399,9 +504,40 @@ Total send time with attachment: ~15 seconds (3s pre-send + 12s Exchange process
 **Key insight**: Never use CSS.escape() for selectors that will pass through LLM tool calls — LLMs strip backslashes. Attribute selectors `[id="value"]` are LLM-safe.
 
 ### 2026-02-21 — Direct URL navigation triggers CAPTCHAs, blocks browser agent
-**Problem**: Browser agent used `goto("https://identity.doordash.com/auth/user/signup?...")` to navigate directly to the signup page. DoorDash's anti-bot system immediately threw aggressive CAPTCHAs (Arkose/FunCAPTCHA), solved them but got redirected back with new CAPTCHAs in a loop. The agent burned 40 steps in `goto→look→solve_captcha→goto` cycles with zero progress. Root cause: Direct URL navigation to signup/login pages is a classic bot signal — no referrer header, no browsing history, just a raw URL hit. Real humans Google "DoorDash developer signup" and click through search results, which sets proper Referer headers and creates natural traffic patterns that bypass anti-bot systems.
+**Problem**: Browser agent used `goto("https://identity.doordash.com/auth/user/signup?...")` to navigate directly to the signup page. DoorDash's anti-bot system immediately threw aggressive CAPTCHAs (Arkose/FunCAPTCHA), solved them but got redirected back with new CAPTCHAs in a loop. The agent burned 40 steps in `goto→look→solve_captcha→goto` cycles with zero progress. Root cause: Direct URL navigation to signup/logithub.com
+gin pages is a classic bot signal — no referrer header, no browsing history, just a raw URL hit. Real humans Google "DoorDash developer signup" and click through search results, which sets proper Referer headers and creates natural traffic patterns that bypass anti-bot systems.
 **Fix**: Three prompt changes across 3 files:
 1. **`brain/prompts.py` DOMAIN_BROWSER** — added "GOOGLE-FIRST NAVIGATION" section. Brain now instructs agents to "Search Google for 'X signup'" instead of providing direct URLs. Developer Portal example rewritten to use Google search. Explicit rule: "NEVER give the agent a direct signup/login URL."
 2. **`agents/browser_agent.py` BROWSER_SYSTEM_PROMPT** — added full "GOOGLE-FIRST NAVIGATION" section after OODA loop. Explains why (Referer headers, organic traffic patterns, CAPTCHA bypass), shows examples of `goto("https://www.google.com/search?q=...")` → click result. Updated Account Creation workflow to start with Google search. Added "GOOGLE FIRST" as Critical Rule #2. Updated `goto` tool description to note it should only be used for Google search URLs.
 3. **`hands/browser_agent.py` BROWSER_AGENT_PROMPT** — same Google-first section added, Account Creation updated, Rule 12 added.
 **Key insight**: Direct URL navigation is a bot fingerprint. Searching Google and clicking results creates natural referrer chains that sites trust. This single change eliminates most CAPTCHA encounters.
+
+### 2026-02-22 — Browser agent burns 40 steps: empty end_turn death spiral + noisy inspect output
+**Problem**: Three bugs combined to make browser agents fail on GitHub. (1) Groq Llama sometimes ignores `tool_choice=required` and returns `stop=end_turn, blocks=[], tools=[]` with ZERO content for every step. Since all safeguards (`_END_TURN_AUTO_DONE`, text-only nudge, strong nudge) required `dispatches >= 5-8`, they never triggered when dispatches=0. Agent burned all 40 steps doing literally nothing. (2) `act_inspect_page()` dumped 30 nav links per call — on GitHub pages this was 30 lines of irrelevant noise (Dashboard, Pull requests, Issues, etc.) that overwhelmed the LLM on form-filling tasks. (3) `act_click()` on submit buttons didn't report the resulting page state, forcing an extra `look()` call after every click. A 7-action form took 27 dispatches.
+**Fix**: Five changes across 2 files:
+1. **Empty end_turn bail-out** (`agents/base_agent.py`) — new `_empty_endturn_streak` counter. After 5 consecutive completely empty responses (no text, no tools) with 0 dispatches, force-fail immediately instead of burning 40 steps. Resets when any non-empty response arrives.
+2. **Auto-done threshold lowered** (`agents/base_agent.py`) — `_END_TURN_AUTO_DONE` now requires `dispatches >= 3` (was 8). Strong nudge requires `dispatches >= 2` (was 5). This lets agents that did real work finish faster.
+3. **LINKS trimmed on form pages** (`hands/browser.py`) — `act_inspect_page()` now skips the LINKS section entirely when form fields are present (links are irrelevant during form fill). On non-form pages, cap reduced to 10 (from 30).
+4. **Duplicate errors eliminated** (`hands/browser.py`) — ERRORS/ALERTS section now skips when FORM ERRORS already shown (they query the same elements).
+5. **Submit click auto-reports page state** (`hands/browser.py`) — `act_click()` on submit-type buttons appends a mini page assessment (title + field count) to the result, saving the agent a follow-up `look()` call.
+6. **Total inspect output capped at 4000 chars** (`hands/browser.py`) — prevents context window bloat on complex pages. Preserves assessment header and form progress (most actionable), trims element details.
+
+### 2026-02-22 — Gemini empty response death spiral + broken auto-click regex + login detection + Google noise
+**Problem**: Multiple compounding issues prevented browser agents from completing tasks on OpenAI and other sites: (1) Gemini 2.5 Flash returns consecutive empty responses (no text, no tools) when asked to click buttons on already-loaded pages — the model sees the button in PRIMARY ACTIONS but refuses to call click(). (2) The auto-click fallback at streak 3 used regex `r'\[([^\]]+)\]\s*→\s*button'` to extract button text, but `getSel()` returns various CSS selectors (`#id`, `[name="..."]`, `[aria-label="..."]`, etc.) — the regex only matched when the selector literally started with "button". (3) Login detection was broken — pages like `/chat`, `/dashboard`, `/api-keys` were classified as "Logged In: No" because detection only checked for logout/profile DOM elements, missing URL-path-based signals. The agent looped `goto("/login") → redirect to /chat → "not logged in" → goto("/login")` 10+ times. (4) Google search result pages showed 108+ buttons (UI chrome), drowning the actual search results. (5) `back()` and `forward()` caused aimless wandering instead of goal-directed navigation.
+**Fix**: 15+ changes across 4 files:
+1. **Empty response handling chain** (`agents/base_agent.py`) — streak 1: light nudge ("Call look/click/done"), streak 2: auto-look() + directive ("👉 CLICK THIS NOW: call click('ButtonName')"), streak 3: full AUTOPILOT (look → auto-fill empty form fields → auto-click primary button), streak 4: text warning, streak 5: bail.
+2. **Auto-click regex fix** (`agents/base_agent.py`) — changed from `r'\[([^\]]+)\]\s*→\s*button'` to section-aware parsing: extracts the PRIMARY ACTIONS section first, then matches `\[([^\]]+)\]\s*→` within it. Now works regardless of CSS selector format.
+3. **Auto-fill for forms** (`agents/base_agent.py`) — at streak 3, if look() shows empty form fields, auto-fills them with smart defaults based on field labels (name→"tars-agent-key", email→"tarsitgroup@outlook.com", password→"Tars.Dev2026!", etc.) using `fill_form()`, then auto-clicks the primary button.
+4. **Auto-done when stuck** (`agents/base_agent.py`) — if streak 3 autopilot finds no buttons and no empty fields, auto-returns page content as done() result.
+5. **Login redirect detection** (`hands/browser.py`) — `act_goto()` compares requested URL path vs actual URL path. If `/login` → `/chat`, appends "🔑 You are ALREADY LOGGED IN".
+6. **URL-path-based login detection** (`hands/browser.py`) — paths matching `/(chat|dashboard|home|app|console|playground|account|settings|overview|projects|billing|api-keys|usage|organization|profile|workspace)/` set `loggedIn = true`.
+7. **Google search results parser** (`hands/browser.py`) — on Google search pages, extracts `<h3>` titles from `div.g a h3` and shows as "🔍 SEARCH RESULTS (click by title text)" with domains.
+8. **Button noise filter** (`hands/browser.py`) — on Google search pages, filters out all buttons except type=submit.
+9. **Button categorization** (`hands/browser.py`) — buttons split into "🎯 PRIMARY ACTIONS" (sign up, create, submit, continue, etc.) and "OTHER BUTTONS" (capped at 10).
+10. **Navigation links section** (`hands/browser.py`) — sidebar nav items shown as "📍 NAVIGATION LINKS".
+11. **back/forward removed** (`agents/browser_agent.py`, `hands/browser_agent.py`) — removed from BROWSER_TOOLS, dispatch returns "⛔ BLOCKED".
+12. **Goto loop detection** (`agents/base_agent.py`) — tracks `_goto_url_counts` dict, at 3+ same URL navigations injects "🚨 GOTO LOOP DETECTED" warning.
+13. **Planning injection** (`agents/base_agent.py`) — after first look() with ≤3 dispatches, appends "🎯 PLANNING CHECK" to force the agent to plan before acting.
+14. **Step countdown** (`agents/base_agent.py`) — at 15 steps remaining, injects "⏰ STEP BUDGET" warning.
+15. **Browser prompt rewrite** (`agents/browser_agent.py`) — 38% smaller with DECISION FRAMEWORK, OAuth popup auto-detection, JS write guard.
+**Key insight**: Gemini 2.5 Flash's empty response problem is a model limitation, not a prompting issue. The autopilot (auto-look → auto-fill → auto-click) bypasses the model entirely for simple interactions, making the agent functional even when the LLM refuses to act. The section-aware button extraction (PRIMARY ACTIONS only) prevents clicking wrong elements.

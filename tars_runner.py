@@ -24,6 +24,7 @@ import signal
 import subprocess
 import hashlib
 import threading
+import resource
 from pathlib import Path
 from datetime import datetime
 
@@ -43,6 +44,8 @@ tars_process = None
 watcher_thread = None
 shutting_down = False
 auto_reload = "--no-reload" not in sys.argv
+_tars_log_fh = None
+_tars_err_fh = None
 
 
 def log(msg):
@@ -74,18 +77,26 @@ def free_ports():
 
 def start_tars():
     """Start TARS as a subprocess with caffeinate."""
-    global tars_process
+    global tars_process, _tars_log_fh, _tars_err_fh
     free_ports()
     log("🚀 Starting TARS...")
 
-    tars_log = open(TARS_STDOUT, "a")
-    tars_err = open(TARS_STDERR, "a")
+    # Close previous log handles to avoid FD leak on restart
+    for fh in (_tars_log_fh, _tars_err_fh):
+        try:
+            if fh:
+                fh.close()
+        except Exception:
+            pass
+
+    _tars_log_fh = open(TARS_STDOUT, "a")
+    _tars_err_fh = open(TARS_STDERR, "a")
 
     tars_process = subprocess.Popen(
         ["/usr/bin/caffeinate", "-s", PYTHON, TARS_SCRIPT],
         cwd=str(TARS_DIR),
-        stdout=tars_log,
-        stderr=tars_err,
+        stdout=_tars_log_fh,
+        stderr=_tars_err_fh,
         env={**os.environ, "HOME": str(Path.home()), "LANG": "en_US.UTF-8"},
     )
     log(f"   PID: {tars_process.pid}")
@@ -172,6 +183,14 @@ def main():
 
     # Ensure we're in the TARS directory (tars.py expects CWD to be repo root)
     os.chdir(str(TARS_DIR))
+
+    # Raise file descriptor limit (macOS default 256 is too low for 24/7 agent)
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (min(4096, hard), hard))
+        log(f"   FD limit: {soft} → {min(4096, hard)}")
+    except Exception:
+        pass
 
     LOG_DIR.mkdir(exist_ok=True)
 

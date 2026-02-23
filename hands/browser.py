@@ -65,7 +65,12 @@ def _ensure():
     if _cdp and _cdp.connected:
         _auto_handle_dialogs()
         return
-    # Connection dead or never created — always start fresh
+    # Close dead connection before creating new one (avoid FD leak)
+    if _cdp:
+        try:
+            _cdp.close()
+        except Exception:
+            pass
     _cdp = CDP()
     _cdp.ensure_connected()
 
@@ -83,11 +88,15 @@ def _auto_handle_dialogs():
 
 _consecutive_timeouts = 0  # Track repeated CDP timeouts
 
-def _js(code):
+def _js(code, timeout=30):
     """Execute JavaScript in the active tab. Returns string result.
     
     On CDP timeout: navigates to about:blank to unstick the browser.
     After 3+ consecutive timeouts: forces full CDP reconnect.
+    
+    Args:
+        code: JavaScript code to evaluate.
+        timeout: Max seconds to wait for result (default 30, use 5 for post-click checks).
     """
     global _cdp, _consecutive_timeouts
     _ensure()
@@ -96,7 +105,7 @@ def _js(code):
             "expression": code,
             "returnByValue": True,
             "awaitPromise": False,
-        })
+        }, timeout=timeout)
         _consecutive_timeouts = 0  # Reset on success
         if r.get("exceptionDetails"):
             exc = r["exceptionDetails"]
@@ -113,31 +122,34 @@ def _js(code):
         return str(val)
     except TimeoutError as e:
         _consecutive_timeouts += 1
-        logger.warning(f"    ⚠️ CDP timeout #{_consecutive_timeouts}: {str(e)[:80]}")
-        # Try to unstick the browser by navigating to a blank page
-        try:
-            if _consecutive_timeouts >= 3:
-                # Force full reconnect after 3+ consecutive timeouts
-                logger.warning(f"    🔄 Forcing CDP reconnect after {_consecutive_timeouts} consecutive timeouts")
-                if _cdp:
-                    try:
-                        _cdp.connected = False
-                    except Exception:
-                        pass
-                    _cdp = None
-                _cdp = CDP()
-                _cdp.ensure_connected()
-                # Navigate to blank page to start clean
-                _cdp.send("Page.navigate", {"url": "about:blank"})
-                time.sleep(1)
-                _consecutive_timeouts = 0
-            else:
-                # Try navigating to about:blank to unstick
-                _cdp.send("Page.navigate", {"url": "about:blank"}, timeout=10)
-                time.sleep(1)
-        except Exception:
-            pass
-        return f"JS_ERROR: CDP timeout after 30s: {str(e)[:60]}"
+        logger.warning(f"    ⚠️ CDP timeout #{_consecutive_timeouts} ({timeout}s): {str(e)[:80]}")
+        # Only do aggressive recovery for long-timeout (default 30s) calls.
+        # Short-timeout calls (post-click checks) should just return error
+        # without killing the current page by navigating to about:blank.
+        if timeout >= 20:
+            try:
+                if _consecutive_timeouts >= 3:
+                    # Force full reconnect after 3+ consecutive timeouts
+                    logger.warning(f"    🔄 Forcing CDP reconnect after {_consecutive_timeouts} consecutive timeouts")
+                    if _cdp:
+                        try:
+                            _cdp.close()
+                        except Exception:
+                            pass
+                        _cdp = None
+                    _cdp = CDP()
+                    _cdp.ensure_connected()
+                    # Navigate to blank page to start clean
+                    _cdp.send("Page.navigate", {"url": "about:blank"})
+                    time.sleep(1)
+                    _consecutive_timeouts = 0
+                else:
+                    # Try navigating to about:blank to unstick
+                    _cdp.send("Page.navigate", {"url": "about:blank"}, timeout=10)
+                    time.sleep(1)
+            except Exception:
+                pass
+        return f"JS_ERROR: CDP timeout after {timeout}s: {str(e)[:60]}"
     except Exception as e:
         _consecutive_timeouts += 1
         if _consecutive_timeouts >= 3:
@@ -145,7 +157,7 @@ def _js(code):
             logger.warning(f"    🔄 Forcing CDP reconnect after {_consecutive_timeouts} consecutive errors")
             if _cdp:
                 try:
-                    _cdp.connected = False
+                    _cdp.close()
                 except Exception:
                     pass
                 _cdp = None
@@ -498,7 +510,22 @@ def act_goto(url):
     _wait_for_load(15)
     time.sleep(0.5)
     title = _js("document.title") or ""
-    return f"Opened {url} — {title}"
+    actual_url = _js("location.href") or url
+
+    # Detect redirects — e.g. /login → /chat means already logged in
+    result = f"Opened {url} — {title}"
+    from urllib.parse import urlparse
+    req_path = urlparse(url).path.rstrip("/")
+    act_path = urlparse(actual_url).path.rstrip("/")
+    if req_path and act_path and req_path != act_path:
+        result += f"\n⚠️ REDIRECTED to: {actual_url}"
+        login_paths = {"login", "signin", "sign-in", "auth", "signup", "sign-up"}
+        app_paths = {"chat", "dashboard", "home", "app", "console", "playground", "account", "settings", "overview", "projects"}
+        req_leaf = req_path.strip("/").split("/")[-1].lower() if req_path.strip("/") else ""
+        act_leaf = act_path.strip("/").split("/")[-1].lower() if act_path.strip("/") else ""
+        if req_leaf in login_paths and act_leaf in app_paths:
+            result += "\n🔑 You are ALREADY LOGGED IN — the login page redirected to the app. Skip login and proceed with your task."
+    return result
 
 
 def act_back():
@@ -597,7 +624,7 @@ def _capture_page_state():
                 errors: errs.slice(0, 5),
                 scrollY: Math.round(window.scrollY)
             });
-        })()""")
+        })()""", timeout=10)
         if raw and not raw.startswith("JS_ERROR"):
             return json.loads(raw)
     except Exception:
@@ -698,7 +725,7 @@ _FORM_ANALYSIS_JS = r"""(function() {
 def _analyze_forms():
     """Analyze all forms on the page. Returns form structure with fill state."""
     try:
-        raw = _js(_FORM_ANALYSIS_JS)
+        raw = _js(_FORM_ANALYSIS_JS, timeout=10)
         if raw and not raw.startswith("JS_ERROR"):
             return json.loads(raw)
     except Exception:
@@ -892,9 +919,18 @@ _CLASSIFY_PAGE_JS = r"""(function() {
         type = 'error_page'; confidence = 75;
     }
 
-    var loggedInEls = document.querySelectorAll('[aria-label*="rofile" i], [href*="/logout" i], [href*="signout" i], [data-testid*="avatar"], [data-testid*="profile"]');
+    var loggedInEls = document.querySelectorAll('[aria-label*="rofile" i], [href*="/logout" i], [href*="signout" i], [href*="sign-out" i], [data-testid*="avatar"], [data-testid*="profile"], [aria-label*="account" i], [aria-label*="user menu" i], img[alt*="avatar" i], img[alt*="profile" i]');
     var loggedIn = loggedInEls.length >= 1;
     var loggedInAs = '';
+
+    // URL-based login detection: paths like /chat, /dashboard, /home, /console imply user is logged in
+    if (!loggedIn) {
+        var appPaths = /\/(chat|dashboard|home|app|console|playground|account|settings|overview|projects|billing|api-keys|usage|organization|profile|workspace)(\/|$|\?)/i;
+        if (appPaths.test(location.pathname)) {
+            loggedIn = true;
+        }
+    }
+
     if (loggedIn) {
         var pLink = document.querySelector('a[href*="/profile" i], a[href$="/me" i], [data-testid*="profile-link"]');
         if (pLink) loggedInAs = (pLink.getAttribute('href') || '').split('/').filter(Boolean).pop() || '';
@@ -929,7 +965,7 @@ def _classify_page_internal():
     Returns dict with: type, confidence, url, title, logged_in, logged_in_as,
     has_captcha, overlays, field_count, password_fields, button_count, select_count.
     """
-    raw = _js(_CLASSIFY_PAGE_JS)
+    raw = _js(_CLASSIFY_PAGE_JS, timeout=10)
     try:
         return json.loads(raw)
     except (json.JSONDecodeError, TypeError):
@@ -1150,18 +1186,28 @@ def act_inspect_page():
                 out.push('');
             }
 
-            // ── Checkboxes & Radio Buttons ──
+            // ── Checkboxes, Radio Buttons & Toggle Switches ──
             var checks = [];
-            document.querySelectorAll('input[type=checkbox], input[type=radio], [role=checkbox], [role=radio], [role=switch]').forEach(function(el) {
+            document.querySelectorAll('input[type=checkbox], input[type=radio], [role=checkbox], [role=radio], [role=switch], button[aria-pressed]').forEach(function(el) {
                 if (!isVis(el)) return;
                 var label = getLabel(el);
                 if (!label) {
                     var lbl = el.closest('label');
-                    label = lbl ? lbl.innerText.trim().substring(0, 60) : (el.name || el.id || '?');
+                    label = lbl ? lbl.innerText.trim().substring(0, 60) : '';
                 }
+                if (!label) {
+                    label = el.getAttribute('aria-label') || '';
+                }
+                if (!label) {
+                    // Check nearby text (previous sibling, parent text)
+                    var prev = el.previousElementSibling;
+                    if (prev) label = (prev.innerText || '').trim().substring(0, 40);
+                }
+                if (!label) label = el.name || el.id || '?';
                 var sel = getSel(el);
-                var checked = el.checked || el.getAttribute('aria-checked') === 'true';
-                var type = el.type || el.getAttribute('role') || 'checkbox';
+                var isToggle = el.hasAttribute('aria-pressed');
+                var checked = el.checked || el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-pressed') === 'true';
+                var type = el.type || el.getAttribute('role') || (isToggle ? 'toggle' : 'checkbox');
                 var icon = type === 'radio' ? (checked ? '●' : '○') : (checked ? '☑' : '☐');
                 checks.push({icon: icon, label: label, sel: sel});
             });
@@ -1173,55 +1219,134 @@ def act_inspect_page():
                 out.push('');
             }
 
-            // ── Buttons (with selectors for unambiguous clicking) ──
+            // ── Buttons (separated into PRIMARY ACTIONS and other buttons) ──
+            // On search engine pages, heavily filter buttons (Google has 100+ UI buttons)
+            var isSearchPage = location.hostname.indexOf('google.com') !== -1 && location.pathname === '/search';
             var btns = [];
             document.querySelectorAll('button, input[type=submit], input[type=button], [role=button]').forEach(function(el) {
                 if (!isVis(el)) return;
                 var text = (el.innerText || el.value || el.getAttribute('aria-label') || '').trim();
-                if (text && text.length < 80) {
-                    var sel = getSel(el);
-                    btns.push({text: text, sel: sel});
+                if (!text || text.length >= 80 || text.length === 0) return;
+                // On search pages, skip Google UI buttons — only keep submit/search buttons
+                if (isSearchPage) {
+                    var textLower = text.toLowerCase();
+                    if (textLower !== 'search' && el.type !== 'submit') return;
                 }
+                var sel = getSel(el);
+                // Classify: primary action buttons vs misc buttons
+                var textLower = text.toLowerCase();
+                var isPrimary = false;
+                var primaryWords = ['sign up', 'sign in', 'log in', 'login', 'register',
+                    'create', 'submit', 'continue', 'next', 'save', 'generate',
+                    'confirm', 'verify', 'send', 'accept', 'agree', 'done',
+                    'get started', 'start', 'apply', 'enroll', 'join',
+                    'continue with google', 'continue with github', 'continue with microsoft',
+                    'add', 'new', 'upload', 'download', 'export', 'import'];
+                for (var i = 0; i < primaryWords.length; i++) {
+                    if (textLower.indexOf(primaryWords[i]) !== -1) { isPrimary = true; break; }
+                }
+                // Also primary if it's type=submit
+                if (el.type === 'submit') isPrimary = true;
+                btns.push({text: text, sel: sel, primary: isPrimary});
             });
-            if (btns.length) {
-                out.push('BUTTONS:');
-                btns.forEach(function(b) {
-                    out.push('  [' + b.text + '] → ' + b.sel);
+
+            // ── Search Results (special section for Google/Bing) ──
+            if (isSearchPage) {
+                var results = [];
+                document.querySelectorAll('div.g a h3, div[data-sokoban-container] a h3').forEach(function(h3) {
+                    var a = h3.closest('a');
+                    if (a && isVis(h3)) {
+                        var title = h3.innerText.trim();
+                        var href = a.href || '';
+                        if (title && href && results.length < 10) {
+                            // Extract domain for clarity
+                            var domain = '';
+                            try { domain = new URL(href).hostname; } catch(e) {}
+                            results.push({title: title, domain: domain});
+                        }
+                    }
                 });
-                out.push('');
+                if (results.length) {
+                    out.push('🔍 SEARCH RESULTS (click by title text):');
+                    results.forEach(function(r) {
+                        out.push('  [' + r.title + '] (' + r.domain + ')');
+                    });
+                    out.push('');
+                }
             }
 
-            // ── Links (first 30 visible) ──
-            var links = [];
-            document.querySelectorAll('a[href]').forEach(function(a) {
-                if (links.length >= 30 || !isVis(a)) return;
-                var text = a.innerText.trim();
-                if (text && text.length > 0 && text.length < 80) {
-                    links.push(text.substring(0, 60));
+            if (btns.length) {
+                var primary = btns.filter(function(b) { return b.primary; });
+                var other = btns.filter(function(b) { return !b.primary; });
+                if (primary.length) {
+                    out.push('🎯 PRIMARY ACTIONS:');
+                    primary.forEach(function(b) {
+                        out.push('  [' + b.text + '] → ' + b.sel);
+                    });
+                    out.push('');
                 }
-            });
-            if (links.length) {
-                out.push('LINKS:');
-                links.forEach(function(l) { out.push('  [' + l + ']'); });
-                out.push('');
+                if (other.length) {
+                    // Cap non-primary buttons at 10 to reduce noise
+                    var shown = other.slice(0, 10);
+                    out.push('OTHER BUTTONS (' + shown.length + '/' + other.length + '):');
+                    shown.forEach(function(b) {
+                        out.push('  [' + b.text + '] → ' + b.sel);
+                    });
+                    out.push('');
+                }
             }
 
-            // ── Error/Alert Messages ──
-            var errors = [];
-            var positiveWords2 = ['is valid', 'is available', 'looks good', 'accepted', 'confirmed', 'strong password'];
-            document.querySelectorAll('[role=alert], .error, .alert, .warning, [aria-live=assertive], [aria-live=polite], .field-error, .form-error, .validation-error, .invalid-feedback, .help-block, [id*=error], [class*=error], [class*=Error]').forEach(function(el) {
-                if (!isVis(el)) return;
-                var text = el.innerText.trim();
-                if (text && text.length > 2 && text.length < 200 && errors.indexOf(text) === -1) {
-                    var lower = text.toLowerCase();
-                    var isPositive = positiveWords2.some(function(pw) { return lower.indexOf(pw) !== -1; });
-                    if (!isPositive) errors.push(text);
+            // ── Links (max 15 visible, skip on form pages, highlight nav items) ──
+            var hasFormFields = fields.length > 0;
+            if (!hasFormFields) {
+                var links = [];
+                var navKeywords = ['settings', 'api', 'keys', 'tokens', 'developer',
+                    'account', 'profile', 'dashboard', 'billing', 'usage',
+                    'organization', 'security', 'permissions', 'credentials',
+                    'apps', 'integrations', 'webhooks', 'team', 'admin'];
+                document.querySelectorAll('a[href]').forEach(function(a) {
+                    if (links.length >= 15 || !isVis(a)) return;
+                    var text = a.innerText.trim();
+                    if (text && text.length > 1 && text.length < 80) {
+                        var textLower = text.toLowerCase();
+                        var isNav = navKeywords.some(function(kw) { return textLower.indexOf(kw) !== -1; });
+                        links.push({text: text.substring(0, 60), isNav: isNav});
+                    }
+                });
+                if (links.length) {
+                    var navLinks = links.filter(function(l) { return l.isNav; });
+                    var otherLinks = links.filter(function(l) { return !l.isNav; });
+                    if (navLinks.length) {
+                        out.push('📍 NAVIGATION LINKS:');
+                        navLinks.forEach(function(l) { out.push('  [' + l.text + ']'); });
+                        out.push('');
+                    }
+                    if (otherLinks.length) {
+                        out.push('LINKS (' + otherLinks.length + ' shown):');
+                        otherLinks.forEach(function(l) { out.push('  [' + l.text + ']'); });
+                        out.push('');
+                    }
                 }
-            });
-            if (errors.length) {
-                out.push('⚠️ ERRORS/ALERTS ON PAGE:');
-                errors.forEach(function(e) { out.push('  ' + e); });
-                out.push('');
+            }
+
+            // ── Error/Alert Messages (skip if already shown in FORM ERRORS) ──
+            if (!fieldErrors.length) {
+                var errors = [];
+                var positiveWords2 = ['is valid', 'is available', 'looks good', 'accepted', 'confirmed', 'strong password'];
+                document.querySelectorAll('[role=alert], .error, .alert, .warning, [aria-live=assertive], [aria-live=polite], .field-error, .form-error, .validation-error, .invalid-feedback, .help-block, [id*=error], [class*=error], [class*=Error]').forEach(function(el) {
+                    if (!isVis(el)) return;
+                    var text = el.innerText.trim();
+                    if (text && text.length > 2 && text.length < 200 && errors.indexOf(text) === -1) {
+                        var lower = text.toLowerCase();
+                        var isPositive = positiveWords2.some(function(pw) { return lower.indexOf(pw) !== -1; });
+                        if (!isPositive) errors.push(text);
+                    }
+                });
+                if (errors.length) {
+                    out.push('⚠️ ERRORS/ALERTS ON PAGE:');
+                    errors.forEach(function(e) { out.push('  ' + e); });
+                    out.push('');
+                }
             }
 
             // ── iframes (note them) ──
@@ -1239,7 +1364,7 @@ def act_inspect_page():
 
             return out.join('\\n');
         })()
-    """)
+    """, timeout=10)
     detail = raw or "Could not inspect page — try act_goto first"
 
     # ── Phase 3: Page diff — what changed since last look? ──
@@ -1265,7 +1390,23 @@ def act_inspect_page():
     except Exception:
         pass
 
-    return assessment_header + diff_section + form_section + detail
+    full_output = assessment_header + diff_section + form_section + detail
+
+    # ── Phase 5: Cap output size to prevent context window bloat ──
+    # On complex pages (GitHub, etc.) the output can exceed 6000 chars.
+    # The LLM gets overwhelmed by noise. Cap at 4000 chars, preserving
+    # the assessment header and form progress (most useful sections).
+    _MAX_INSPECT_CHARS = 4000
+    if len(full_output) > _MAX_INSPECT_CHARS:
+        # Preserve header + diff + form (most actionable), trim detail
+        prefix = assessment_header + diff_section + form_section
+        remaining = _MAX_INSPECT_CHARS - len(prefix) - 60  # 60 for truncation note
+        if remaining > 500:
+            full_output = prefix + detail[:remaining] + "\n... [page details trimmed — use read() for full text]"
+        else:
+            full_output = full_output[:_MAX_INSPECT_CHARS] + "\n... [trimmed]"
+
+    return full_output
 
 
 def act_read_page():
@@ -1311,7 +1452,7 @@ def act_click(target):
             return f"ERROR: No visible element with text: {target}"
 
     # Capture state before click
-    url_before = _js("location.href") or ""
+    url_before = _js("location.href", timeout=5) or ""
 
     x, y = coords
 
@@ -1322,7 +1463,7 @@ def act_click(target):
     time.sleep(0.5)
 
     # Check what changed after click
-    url_after = _js("location.href") or ""
+    url_after = _js("location.href", timeout=5) or ""
     
     # Detect inline errors/validation messages that appeared
     errors = _js("""
@@ -1343,7 +1484,7 @@ def act_click(target):
             });
             return msgs.join(' | ');
         })()
-    """)
+    """, timeout=5)
 
     result = f"Clicked '{target}' at ({x}, {y})"
     
@@ -1354,7 +1495,7 @@ def act_click(target):
     if any(kw in clean_target.lower() for kw in submit_keywords):
         time.sleep(1.5)  # Extra wait for form submissions
         # Re-check URL and errors after the extra wait
-        url_after = _js("location.href") or ""
+        url_after = _js("location.href", timeout=5) or ""
         errors = _js("""
             (function() {
                 var msgs = [];
@@ -1373,7 +1514,15 @@ def act_click(target):
                 });
                 return msgs.join(' | ');
             })()
-        """) or ""
+        """, timeout=5) or ""
+
+        # Auto-append mini page assessment after submit clicks to save a look() call
+        try:
+            new_title = _js("document.title", timeout=5) or ""
+            field_count = _js("document.querySelectorAll('input:not([type=hidden]), textarea, select').length", timeout=5) or "0"
+            result += f" | Page now: \"{new_title}\" ({field_count} fields)"
+        except Exception:
+            pass
     
     if url_before != url_after:
         result += f" → navigated to {url_after}"

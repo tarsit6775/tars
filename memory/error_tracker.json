@@ -287,16 +287,21 @@
     ],
     "sample_params": [
       {
-        "task": "Navigate to https://www.pexels.com/. Search for 'abstract geometric art vibrant colors'. Click on the first image result. Right-click the image and select 'Save Image As...' to download it. Save the image to '/tmp/cool_picture.jpeg'. Once the image is downloaded, call done.",
+        "task": "\n1. Search Google for 'OpenAI developer platform'.\n2. Locate and click on the official result that leads to platform.openai.com.\n3. On the OpenAI login page, identify the 'Continue with Google' button and click it.\n4. If prompted, select the 'tarsitsales@gmail.com' account. Assume the Google account",
         "steps": 40
       },
       {
-        "task": "Navigate to https://www.pexels.com/. Search for 'abstract geometric art vibrant colors'. Click on the first image result. Right-click the image and select 'Save Image As...' to download it. Save the image to '/tmp/cool_picture.jpeg'. Once the image is downloaded, call done."
+        "task": "\n1. Search Google for 'OpenAI developer platform login'.\n2. Click on the official result that leads to platform.openai.com/login or a similar login page.\n3. On the login page, prioritize clicking the button or link that says 'Continue with Google'.\n4. If prompted to select a Google account, choose '",
+        "steps": 40
+      },
+      {
+        "task": "\n1. Search Google for 'OpenAI developer platform login'.\n2. Click on the official result that leads to platform.openai.com/login or a similar login page.\n3. On the login page, identify and click the button or link that says 'Continue with Google'.\n4. If a new window or tab opens for Google sign-in, ",
+        "steps": 40
       }
     ],
-    "count": 18,
+    "count": 22,
     "first_seen": "2026-02-17T20:48:06.811510",
-    "last_seen": "2026-02-20T23:40:55.837017",
+    "last_seen": "2026-02-22T20:48:08.897057",
     "fixes": [
       {
         "fix": "Fixed in code: Added observation-only streak detection (6 consecutive look/scroll without action triggers nudge), auto-done for text conclusions (8+ dispatches + conclusion signals \u2192 auto-return), dispatch budget (soft=40, hard=55), and session scratchpad to track attempts/selectors/patterns across steps.",
@@ -307,7 +312,7 @@
       }
     ],
     "auto_fixable": true,
-    "fixed_count": 0
+    "fixed_count": 3
   },
   "deploy_browser_agent:Stuck on signup form. Filled all fields and clicked 'Submit', but the page did not navigate. The URL remains https:<PATH>, and the signup form is still visible. No error messages are explicitly displa": {
     "signature": "Stuck on signup form. Filled all fields and clicked 'Submit', but the page did not navigate. The URL remains https:<PATH>, and the signup form is still visible. No error messages are explicitly displa",
@@ -953,6 +958,88 @@
     "count": 1,
     "first_seen": "2026-02-21T20:57:51.919280",
     "last_seen": "2026-02-21T20:57:51.919288",
+    "fixes": [],
+    "auto_fixable": false,
+    "fixed_count": 0
+  },
+  "agent_Browser Agent:Agent stuck: The provided password 'tarsit6775'<LONG_STR>'Incorrect password' errors. I cannot proceed with generating the token without the correct password.": {
+    "signature": "Agent stuck: The provided password 'tarsit6775'<LONG_STR>'Incorrect password' errors. I cannot proceed with generating the token without the correct password.",
+    "context": "agent_Browser Agent",
+    "raw_error": "Agent stuck: The provided password 'tarsit6775' for confirming access on GitHub is incorrect. I have tried it multiple times and received 'Incorrect password' errors. I cannot proceed with generating the token without the correct password.",
+    "tool": "stuck",
+    "agent": "Browser Agent",
+    "details": "Agent called stuck() at step 11",
+    "source_file": "agents/base_agent.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "agent": "Browser Agent",
+        "step": 11,
+        "task": "\nNavigate to https://github.com/settings/tokens/new.\nOn the 'New personal access token' page:\n1. For 'Token name', type 'tars-agent-token'.\n2. For 'Expiration', select '90 days'.\n3. For 'Repository ac",
+        "reason": "The provided password 'tarsit6775' for confirming access on GitHub is incorrect. I have tried it multiple times and received 'Incorrect password' errors. I cannot proceed with generating the token without the correct password."
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-22T20:28:03.366299",
+    "last_seen": "2026-02-22T20:28:03.366326",
+    "fixes": [],
+    "auto_fixable": false,
+    "fixed_count": 0
+  },
+  "deploy_browser_agent:The provided password 'tarsit6775'<LONG_STR>'Incorrect password' errors. I cannot proceed with generating the token without the correct password.": {
+    "signature": "The provided password 'tarsit6775'<LONG_STR>'Incorrect password' errors. I cannot proceed with generating the token without the correct password.",
+    "context": "deploy_browser_agent",
+    "raw_error": "The provided password 'tarsit6775' for confirming access on GitHub is incorrect. I have tried it multiple times and received 'Incorrect password' errors. I cannot proceed with generating the token without the correct password.",
+    "tool": "deploy_browser_agent",
+    "agent": "browser",
+    "details": "Agent stuck after 11 steps",
+    "source_file": "executor.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "task": "\nNavigate to https://github.com/settings/tokens/new.\nOn the 'New personal access token' page:\n1. For 'Token name', type 'tars-agent-token'.\n2. For 'Expiration', select '90 days'.\n3. For 'Repository access', select 'Only select repositories'.\n4. In the repository selection field, search for and selec",
+        "steps": 11
+      }
+    ],
+    "count": 1,
+    "first_seen": "2026-02-22T20:28:04.645763",
+    "last_seen": "2026-02-22T20:28:04.645767",
+    "fixes": [],
+    "auto_fixable": false,
+    "fixed_count": 0
+  },
+  "deploy_browser_agent:LLM returned empty responses \u2014 model not using tools": {
+    "signature": "LLM returned empty responses \u2014 model not using tools",
+    "context": "deploy_browser_agent",
+    "raw_error": "LLM returned empty responses \u2014 model not using tools",
+    "tool": "deploy_browser_agent",
+    "agent": "browser",
+    "details": "Agent stuck after 39 steps",
+    "source_file": "executor.py",
+    "traceback": "",
+    "fix_hint": "",
+    "fix_hint_files": [],
+    "sample_params": [
+      {
+        "task": "\nNavigate to https://github.com/settings/tokens/new?type=beta.\nOn the 'New personal access token' page:\n1. For 'Token name', type 'tars-automation-pat'.\n2. Set expiration to 'No expiration'.\n3. Select 'Only select repositories' and choose 'tars-automation-hub'.\n4. Under 'Repository permissions', set",
+        "steps": 5
+      },
+      {
+        "task": "\nNavigate to https://github.com/settings/tokens/new?type=beta.\n\nOn the 'New personal access token' page:\n1. Ensure the 'Token name' field is visible. Type 'tars-automation-pat' into it.\n2. Locate the dropdown for 'Expiration' and select 'No expiration'.\n3. Find and select the radio button or checkbo",
+        "steps": 5
+      },
+      {
+        "task": "\nSearch Google for 'OpenAI developer platform'. Click the official result that leads to platform.openai.com.\nOn the OpenAI login page, attempt to 'Continue with Google'.\nUse the email 'tarsitsales@gmail.com' to sign in.\nIf prompted for a password, it should be the one associated with tarsitsales@gma",
+        "steps": 39
+      }
+    ],
+    "count": 3,
+    "first_seen": "2026-02-22T20:29:37.217563",
+    "last_seen": "2026-02-22T20:38:57.459561",
     "fixes": [],
     "auto_fixable": false,
     "fixed_count": 0

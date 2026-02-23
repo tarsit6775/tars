@@ -277,21 +277,20 @@ class IMessageSender:
 
         while time.time() < deadline:
             try:
-                conn = sqlite3.connect(_CHAT_DB)
-                conn.row_factory = sqlite3.Row
-                cur = conn.execute(
-                    """
-                    SELECT a.transfer_state, m.is_sent, m.is_delivered
-                    FROM message m
-                    JOIN message_attachment_join maj ON m.rowid = maj.message_id
-                    JOIN attachment a ON maj.attachment_id = a.rowid
-                    WHERE m.is_from_me = 1
-                    ORDER BY m.date DESC
-                    LIMIT 1
-                    """
-                )
-                row = cur.fetchone()
-                conn.close()
+                with sqlite3.connect(_CHAT_DB) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cur = conn.execute(
+                        """
+                        SELECT a.transfer_state, m.is_sent, m.is_delivered
+                        FROM message m
+                        JOIN message_attachment_join maj ON m.rowid = maj.message_id
+                        JOIN attachment a ON maj.attachment_id = a.rowid
+                        WHERE m.is_from_me = 1
+                        ORDER BY m.date DESC
+                        LIMIT 1
+                        """
+                    )
+                    row = cur.fetchone()
 
                 if row:
                     state = row["transfer_state"]

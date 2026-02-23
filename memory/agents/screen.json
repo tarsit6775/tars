@@ -1,30 +1,37 @@
 {
-  "success_patterns": [],
+  "success_patterns": [
+    {
+      "task": "[POST-REVIEW] \n1. Open Google Chrome and navigate to https://github.com/new.\n2. Locate the 'Repository name' field and type 'tars-automation-hub'.\n3. Locate the 'Description' field and type 'Central r",
+      "summary": "The agent failed to complete the multi-step repository creation task within 40 steps, likely getting stuck on complex UI interactions like dropdown selections. Next time, consider breaking this long task into smaller sub-tasks (e.g., 'create repo details",
+      "steps": 0,
+      "timestamp": "2026-02-22T19:04:30.018492"
+    },
+    {
+      "task": "[POST-REVIEW] \n1. Open Google Chrome.\n2. Go to Google.com and search for 'OpenAI developer platform login'.\n3. Carefully examine the search results and click on the official OpenAI link that leads to ",
+      "summary": "The agent failed due to hitting the step limit,",
+      "steps": 0,
+      "timestamp": "2026-02-22T21:10:59.956349"
+    },
+    {
+      "task": "[POST-REVIEW] \n1. Open Google Chrome.\n2. Go to Google.com and search for 'OpenAI developer platform login'.\n3. Carefully examine the search results and click on the official OpenAI link that leads to ",
+      "summary": "The agent was prematurely terminated by the user, preventing",
+      "steps": 0,
+      "timestamp": "2026-02-22T21:12:07.542148"
+    },
+    {
+      "task": "[POST-REVIEW] You are currently on the OpenAI API keys page (https://platform.openai.com/api-keys). Find and click the button that says \"Create new secret key\". In the dialog that appears, find the in",
+      "summary": "The agent critically failed to interact with the webpage, as clicks were ineffective and `read_",
+      "steps": 0,
+      "timestamp": "2026-02-22T21:18:10.046703"
+    },
+    {
+      "task": "[POST-REVIEW] \nYou are currently on the OpenAI API keys page (https://platform.openai.com/api-keys).\nLook for a button that says \"Create new secret key\" and click it.\n",
+      "summary": "The agent was killed by the user, indicating it likely struggled to locate or interact with the \"Create new secret key\" button. Next time, provide a more robust identifier for the",
+      "steps": 0,
+      "timestamp": "2026-02-22T21:22:32.091325"
+    }
+  ],
   "failure_patterns": [
-    {
-      "task": "Take a full-page screenshot of https://news.ycombinator.com and save it to /Users/abdullah/Desktop/hacker_news_screenshot.png",
-      "reason": "I am unable to switch to Google Chrome. I have tried `open_app`, clicking the dock icon, `command+tab`, and `command+space` to bring Chrome to the foreground, but the screenshots consistently show the VS Code window. It seems there is an issue with application switching in this environment.",
-      "steps": 28,
-      "timestamp": "2026-02-20T23:06:26.148356"
-    },
-    {
-      "task": "Open Google Chrome and navigate to 'https://unsplash.com/photos/abstract-art-with-colorful-geometric-shapes-1WSj5xi9AHo'. Once the page loads, find the download button, which usually says 'Download fr",
-      "reason": "Reached max 40 steps",
-      "steps": 40,
-      "timestamp": "2026-02-20T23:43:03.797457"
-    },
-    {
-      "task": "Create a DoorDash developer account at https://identity.doordash.com/auth/user/signup. Use email tarsitgroup@outlook.com, password A8iv6!orBwo6*nVo, first name Tars, last name Agent, and for company, ",
-      "reason": "I am unable to switch to Google Chrome. I have tried `open_app`, clicking the dock icon, `command+tab`, and `command+space` to open Chrome, but the screenshots consistently show that I am still in VS Code. I cannot proceed with the task without being able to access the browser.",
-      "steps": 21,
-      "timestamp": "2026-02-21T18:53:40.659789"
-    },
-    {
-      "task": "Search Google for 'DoorDash developer portal sign up'. Click the official result to reach the signup page. Create an account using the provided details: Email: tarsitgroup@outlook.com, Password: Tars.",
-      "reason": "Reached max 40 steps",
-      "steps": 40,
-      "timestamp": "2026-02-21T19:09:07.693664"
-    },
     {
       "task": "1. Open Google Chrome.\n2. Navigate to Google.com.\n3. In the search bar, type \"DoorDash developer portal signup\" and press Enter.\n4. On the search results page, visually identify and click the official",
       "reason": "Reached max 40 steps",
@@ -108,12 +115,48 @@
       "reason": "Reached max 40 steps",
       "steps": 40,
       "timestamp": "2026-02-21T22:31:34.618822"
+    },
+    {
+      "task": "\n1. Open Google Chrome and navigate to https://github.com/new.\n2. Locate the 'Repository name' field and type 'tars-automation-hub'.\n3. Locate the 'Description' field and type 'Central repo for TARS a",
+      "reason": "Reached max 40 steps",
+      "steps": 40,
+      "timestamp": "2026-02-22T19:04:28.170709"
+    },
+    {
+      "task": "\n1. Open Google Chrome.\n2. Go to Google.com and search for 'OpenAI developer platform login'.\n3. Carefully examine the search results and click on the official OpenAI link that leads to their develope",
+      "reason": "Reached max 40 steps",
+      "steps": 40,
+      "timestamp": "2026-02-22T21:10:57.868748"
+    },
+    {
+      "task": "\n1. Open Google Chrome.\n2. Go to Google.com and search for 'OpenAI developer platform login'.\n3. Carefully examine the search results and click on the official OpenAI link that leads to their develope",
+      "reason": "Killed by user",
+      "steps": 23,
+      "timestamp": "2026-02-22T21:12:05.232316"
+    },
+    {
+      "task": "\n1. Open Google Chrome.\n2. Navigate to https://platform.openai.com/api-keys.\n3. Wait for the page to load. \n4. Look for visual cues to determine if the user is logged in. If you see elements related t",
+      "reason": "Killed by user",
+      "steps": 9,
+      "timestamp": "2026-02-22T21:15:51.487390"
+    },
+    {
+      "task": "You are currently on the OpenAI API keys page (https://platform.openai.com/api-keys). Find and click the button that says \"Create new secret key\". In the dialog that appears, find the input field for ",
+      "reason": "I was unable to click the \"Create new secret key\" button on the OpenAI API keys page. Despite multiple attempts to click the button at coordinates (898, 121), the dialog to create a new key did not appear. I also used `read_screen()` multiple times, but it only returned information about the TARS ag",
+      "steps": 26,
+      "timestamp": "2026-02-22T21:18:08.122733"
+    },
+    {
+      "task": "\nYou are currently on the OpenAI API keys page (https://platform.openai.com/api-keys).\nLook for a button that says \"Create new secret key\" and click it.\n",
+      "reason": "Killed by user",
+      "steps": 33,
+      "timestamp": "2026-02-22T21:22:29.993210"
     }
   ],
   "stats": {
-    "total_tasks": 18,
-    "successes": 0,
-    "failures": 18,
-    "total_steps": 655
+    "total_tasks": 29,
+    "successes": 5,
+    "failures": 24,
+    "total_steps": 826
   }
 }

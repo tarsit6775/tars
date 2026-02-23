@@ -116,16 +116,7 @@ BROWSER_TOOLS = [
         "description": "Close the current tab.",
         "input_schema": {"type": "object", "properties": {}}
     },
-    {
-        "name": "back",
-        "description": "Go back to the previous page.",
-        "input_schema": {"type": "object", "properties": {}}
-    },
-    {
-        "name": "forward",
-        "description": "Go forward.",
-        "input_schema": {"type": "object", "properties": {}}
-    },
+    # back and forward REMOVED — agents abuse them, destroying multi-page progress.
     {
         "name": "refresh",
         "description": "Reload the current page.",
@@ -392,7 +383,11 @@ class BrowserAgent:
             if name == "switch_tab": return act_switch_tab(inp["number"])
             if name == "new_tab":   return act_new_tab(inp.get("url", ""))
             if name == "close_tab":  return act_close_tab()
-            if name == "back":       return act_back()
+            if name == "back":
+                return (
+                    "⛔ BLOCKED: back() is disabled — going back destroys multi-page progress. "
+                    "Use look() to see the current page and work FORWARD."
+                )
             if name == "forward":    return act_forward()
             if name == "refresh":    return act_refresh()
             if name == "screenshot": return act_screenshot()

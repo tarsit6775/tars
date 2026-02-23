@@ -328,6 +328,13 @@ class BaseAgent(ABC):
         _end_turn_streak = 0
         _END_TURN_AUTO_DONE = 3  # Auto-done after this many consecutive end_turns
 
+        # Empty end_turn death spiral detection: if the LLM returns end_turn
+        # with ZERO content blocks AND zero dispatches for N steps, the model
+        # is fundamentally broken (Groq ignoring tool_choice=required).
+        # Bail out immediately instead of burning all 40 steps.
+        _empty_endturn_streak = 0
+        _EMPTY_ENDTURN_LIMIT = 5  # Force-fail after this many empty responses with 0 dispatches
+
         # Parallel tool cap: limit how many tool_use blocks we execute per step
         # Prevents agent from batching 12-16 calls and burning through dispatch budget
         _MAX_PARALLEL_TOOLS = 6
@@ -337,6 +344,17 @@ class BaseAgent(ABC):
         _observe_only_streak = 0
         _OBSERVE_STREAK_LIMIT = 6  # After 6 consecutive observe-only steps, nudge
         _observe_nudge_sent = False
+
+        # Browser agent planning: inject planning prompt after first look()
+        _first_look_done = False
+        _planning_injected = False
+
+        # Step countdown warning for browser agents
+        _countdown_warned = False
+
+        # Goto loop detection: track URLs to detect repeated navigation
+        _goto_url_counts = {}  # url -> count
+        _goto_loop_warned = False
 
         for step in range(1, self.max_steps + 1):
             logger.debug(f"  🧠 [{self.agent_name}] Step {step}/{self.max_steps}...")
@@ -361,6 +379,21 @@ class BaseAgent(ABC):
             # Keep the first message (task), last 6 messages (recent context), and
             # truncate tool result contents in the middle to summaries.
             _MAX_MESSAGES_BEFORE_TRIM = 20  # ~10 steps × 2 messages each
+
+            # ── Browser agent step countdown — create urgency ──
+            is_browser_agent = "browser" in self.agent_name.lower()
+            remaining = self.max_steps - step
+            if is_browser_agent and not _countdown_warned and remaining <= 15 and _real_tool_dispatches >= 5:
+                _countdown_warned = True
+                logger.info(f"  ⏰ [{self.agent_name}] Injecting countdown warning: {remaining} steps left")
+                messages.append({"role": "user", "content": (
+                    f"⏰ STEP BUDGET: You have {remaining} steps remaining out of {self.max_steps}. "
+                    f"You have used {_real_tool_dispatches} tool calls so far. "
+                    f"Focus on your PRIMARY GOAL. If you haven't made progress toward it yet, "
+                    f"identify the RIGHT element now and interact with it. "
+                    f"If you've been clicking around without progress, try a DIFFERENT approach."
+                )})
+
             if len(messages) > _MAX_MESSAGES_BEFORE_TRIM:
                 # Keep first message (original task) and last 6 (3 recent steps)
                 # Truncate tool results in the middle, but PRESERVE note results
@@ -673,7 +706,7 @@ class BaseAgent(ABC):
 
                     # ── Regular tool: dispatch ──
                     inp_short = json.dumps(inp)[:120]
-                    logger.debug(f"    🔧 {name}({inp_short})")
+                    logger.info(f"    🔧 {name}({inp_short})")
                     result = self._dispatch(name, inp)
                     _real_tool_dispatches += 1
                     _tool_use_count_this_step += 1
@@ -694,10 +727,10 @@ class BaseAgent(ABC):
                             tool_result_entry["_image_base64"] = img_b64
                             tool_result_entry["_image_mime"] = "image/jpeg"
                         tool_results.append(tool_result_entry)
-                        logger.debug(f"      → {result_str[:200]} [+screenshot image]")
+                        logger.info(f"      → {result_str[:300]} [+screenshot image]")
                     else:
                         result_str = str(result)[:8000]
-                        logger.debug(f"      → {result_str[:200]}")
+                        logger.info(f"      → {result_str[:300]}")
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tid,
@@ -710,6 +743,43 @@ class BaseAgent(ABC):
                     # Session learning: track what worked and what failed
                     is_error = isinstance(result_str, str) and ("ERROR" in result_str or "FAILED" in result_str)
                     self._record_attempt(f"{name}({inp_short})", result_str[:100], not is_error)
+
+                    # ── Browser agent: planning injection after first look() ──
+                    # Forces the LLM to think strategically before random clicking
+                    is_browser = "browser" in self.agent_name.lower()
+                    if is_browser and name == "look" and not _planning_injected and _real_tool_dispatches <= 3:
+                        _planning_injected = True
+                        _first_look_done = True
+                        # Append planning guidance to the tool result
+                        if isinstance(result_str, str) and "FIELDS:" in result_str or "BUTTONS:" in result_str:
+                            planning_hint = (
+                                "\n\n🎯 PLANNING CHECK: You can now see the page elements. "
+                                "Which SPECIFIC element on this page advances your goal? "
+                                "Identify it by name/selector from the list above, then interact with it. "
+                                "Do NOT click random elements — pick the ONE that matches your task."
+                            )
+                            # Modify the last tool result to include planning hint
+                            if tool_results and isinstance(tool_results[-1], dict):
+                                tool_results[-1]["content"] = str(tool_results[-1].get("content", "")) + planning_hint
+
+                    # ── Goto loop detection ──
+                    # If agent calls goto() with the same URL 3+ times, inject warning
+                    if is_browser and name == "goto" and isinstance(inp, dict):
+                        goto_url = inp.get("url", "")
+                        if goto_url:
+                            _goto_url_counts[goto_url] = _goto_url_counts.get(goto_url, 0) + 1
+                            if _goto_url_counts[goto_url] >= 3 and not _goto_loop_warned:
+                                _goto_loop_warned = True
+                                loop_hint = (
+                                    "\n\n🚨 GOTO LOOP DETECTED: You have navigated to this same URL "
+                                    f"{_goto_url_counts[goto_url]} times. STOP navigating to this URL. "
+                                    "If the page redirected you somewhere else, that IS where you need to be. "
+                                    "Call look() to see what's on the current page and interact with it. "
+                                    "If /login redirected to /chat or /dashboard, you are ALREADY LOGGED IN."
+                                )
+                                if tool_results and isinstance(tool_results[-1], dict):
+                                    tool_results[-1]["content"] = str(tool_results[-1].get("content", "")) + loop_hint
+                                logger.warning(f"  🔄 [{self.agent_name}] Goto loop detected: {goto_url} called {_goto_url_counts[goto_url]}x")
 
                     # Periodic progress update
                     if step % self.update_every == 0:
@@ -855,11 +925,202 @@ class BaseAgent(ABC):
                     texts = [b.text for b in assistant_content if b.type == "text"]
                     txt = " ".join(texts).strip()
 
+                    # ── Empty end_turn death spiral detection ──
+                    # If the LLM returns completely empty responses (no text, no tools)
+                    # AND has done zero real work, the model is broken (e.g. Groq/Gemini
+                    # ignoring tool_choice=required). Nudge at 1, auto-look at 2, bail at 5.
+                    if not txt and len(assistant_content) == 0:
+                        _empty_endturn_streak += 1
+                        if _empty_endturn_streak >= _EMPTY_ENDTURN_LIMIT:
+                            msg = (
+                                f"{self.agent_name} failed: LLM returned {_empty_endturn_streak} consecutive "
+                                f"empty responses with no tool calls. The model is not responding to "
+                                f"tool_choice=required. Aborting to avoid wasting steps."
+                            )
+                            logger.warning(f"  ⚠️ {self.agent_name} stuck: {msg[:120]}")
+                            return {
+                                "success": False,
+                                "content": msg,
+                                "steps": step,
+                                "stuck": True,
+                                "stuck_reason": "LLM returned empty responses — model not using tools",
+                            }
+                        elif _empty_endturn_streak == 1:
+                            # First empty: light nudge — don't append empty assistant content
+                            messages.append({"role": "assistant", "content": [{"type": "text", "text": "Let me take action now."}]})
+                            messages.append({"role": "user", "content": (
+                                "You must call a tool NOW. Your task is not done. "
+                                "Call look() to see the page, click(target) to click a button, or done(summary) if finished."
+                            )})
+                            continue
+                        elif _empty_endturn_streak == 2:
+                            # After 2 empties, inject a strong nudge to use tools
+                            # For browser agents, auto-call look() to give context
+                            logger.warning(f"  ⚠️ [{self.agent_name}] {_empty_endturn_streak} consecutive empty responses — injecting tool nudge")
+                            is_browser = "browser" in self.agent_name.lower()
+                            if is_browser:
+                                # Auto-call look() to break the empty loop with real page data
+                                try:
+                                    auto_look = self._dispatch("look", {})
+                                    _real_tool_dispatches += 1
+                                    auto_look_str = str(auto_look)[:6000]
+                                    logger.info(f"  🔄 [{self.agent_name}] Auto-called look() to bootstrap agent")
+
+                                    # Extract primary action buttons from look output for directive nudge
+                                    directive = ""
+                                    import re as _re
+                                    primary_btns_dir = []
+                                    if '🎯 PRIMARY ACTIONS:' in auto_look_str:
+                                        pa_start = auto_look_str.index('🎯 PRIMARY ACTIONS:')
+                                        pa_end = len(auto_look_str)
+                                        for marker in ['OTHER BUTTONS', '📍 NAVIGATION', 'LINKS:', 'FORM ERRORS:', '🔍 SEARCH']:
+                                            idx = auto_look_str.find(marker, pa_start + 20)
+                                            if idx != -1 and idx < pa_end:
+                                                pa_end = idx
+                                        primary_btns_dir = _re.findall(r'\[([^\]]+)\]\s*→', auto_look_str[pa_start:pa_end])
+                                    if primary_btns_dir:
+                                        first_btn = primary_btns_dir[0]
+                                        directive = f'\n\n👉 CLICK THIS NOW: call click("{first_btn}") to proceed.'
+
+                                    messages.append({"role": "assistant", "content": [{"type": "text", "text": "I need to examine the page."}]})
+                                    messages.append({"role": "user", "content": (
+                                        f"Here's what's on the page:\n\n"
+                                        f"{auto_look_str}\n\n"
+                                        f"Call a tool NOW to take action on this page.{directive}"
+                                    )})
+                                except Exception:
+                                    messages.append({"role": "assistant", "content": [{"type": "text", "text": "I need to take action."}]})
+                                    messages.append({"role": "user", "content": (
+                                        "⚠️ You returned an empty response with no tool calls. You MUST call a tool. "
+                                        "Start by calling look() to see the current page, or goto(url) to navigate."
+                                    )})
+                            else:
+                                messages.append({"role": "assistant", "content": [{"type": "text", "text": "I need to take action."}]})
+                                messages.append({"role": "user", "content": (
+                                    "⚠️ You returned an empty response with no tool calls. You MUST call a tool. "
+                                    "Your available tools include: goto(url), look(), click(target), fill_form(fields), done(summary), stuck(reason). "
+                                    "Start by calling look() to see the current page, or goto(url) to navigate. "
+                                    "You MUST respond with a tool_use block — empty responses are not allowed."
+                                )})
+                            continue
+                        else:
+                            # Streak 3-4: Auto-action fallback for browser agents
+                            # If nudges and auto-look failed, the model is broken.
+                            # Autopilot: look → fill fields → click primary button → report
+                            is_browser = "browser" in self.agent_name.lower()
+                            if is_browser and _empty_endturn_streak == 3:
+                                import re as _re2
+                                try:
+                                    auto_look2 = self._dispatch("look", {})
+                                    _real_tool_dispatches += 1
+                                    auto_look2_str = str(auto_look2)[:6000]
+
+                                    # Extract buttons from PRIMARY ACTIONS section only
+                                    primary_btns = []
+                                    if '🎯 PRIMARY ACTIONS:' in auto_look2_str:
+                                        pa_s = auto_look2_str.index('🎯 PRIMARY ACTIONS:')
+                                        pa_e = len(auto_look2_str)
+                                        for mk in ['OTHER BUTTONS', '📍 NAVIGATION', 'LINKS:', 'FORM ERRORS:', '🔍 SEARCH']:
+                                            mi = auto_look2_str.find(mk, pa_s + 20)
+                                            if mi != -1 and mi < pa_e:
+                                                pa_e = mi
+                                        primary_btns = _re2.findall(r'\[([^\]]+)\]\s*→', auto_look2_str[pa_s:pa_e])
+
+                                    # Extract empty form fields for auto-fill
+                                    # Format: "  Label → selector (type) = "value"" or "  Label → selector (type)" for empty
+                                    empty_fields = []
+                                    if 'FIELDS:' in auto_look2_str:
+                                        fs = auto_look2_str.index('FIELDS:')
+                                        fe = len(auto_look2_str)
+                                        for fmk in ['🚨 FORM ERRORS:', 'DROPDOWNS:', '🎯 PRIMARY', 'OTHER BUTTONS', '📍 NAVIGATION', 'CHECKBOXES:']:
+                                            fi = auto_look2_str.find(fmk, fs + 8)
+                                            if fi != -1 and fi < fe:
+                                                fe = fi
+                                        fields_section = auto_look2_str[fs:fe]
+                                        field_matches = _re2.findall(r'^\s+(.+?)\s*→\s*(\S+)\s*\((\w+)\)(.*)$', fields_section, _re2.MULTILINE)
+                                        for label, selector, ftype, rest in field_matches:
+                                            # Empty if no value part or value is ""
+                                            if '= "' not in rest or rest.strip() == '= ""':
+                                                empty_fields.append((label.strip(), ftype, selector))
+
+                                    actions_taken = []
+
+                                    # Auto-fill empty form fields if any
+                                    if empty_fields:
+                                        # Build fill_form fields from task context
+                                        task_text = messages[0].get("content", "") if messages else ""
+                                        if isinstance(task_text, list):
+                                            task_text = " ".join(b.get("text", "") for b in task_text if isinstance(b, dict))
+                                        fill_fields = []
+                                        for label, ftype, selector in empty_fields:
+                                            label_l = label.strip().lower()
+                                            value = None
+                                            # Smart defaults based on field label
+                                            if any(kw in label_l for kw in ["name", "key name", "label", "title"]):
+                                                value = "tars-agent-key"
+                                            elif any(kw in label_l for kw in ["email", "e-mail"]):
+                                                value = "tarsitgroup@outlook.com"
+                                            elif any(kw in label_l for kw in ["password", "pass"]):
+                                                value = "Tars.Dev2026!"
+                                            elif any(kw in label_l for kw in ["url", "website", "redirect"]):
+                                                value = "https://localhost:8420"
+                                            elif any(kw in label_l for kw in ["description", "desc"]):
+                                                value = "TARS autonomous agent"
+                                            if value:
+                                                fill_fields.append({"selector": selector, "value": value})
+                                        if fill_fields:
+                                            logger.warning(f"  🤖 [{self.agent_name}] Auto-filling {len(fill_fields)} fields (model unresponsive)")
+                                            fill_result = self._dispatch("fill_form", {"fields": fill_fields})
+                                            _real_tool_dispatches += 1
+                                            actions_taken.append(f"Filled {len(fill_fields)} fields: {fill_result}")
+
+                                    # Auto-click primary button if available
+                                    if primary_btns:
+                                        btn_target = primary_btns[0]
+                                        logger.warning(f"  🤖 [{self.agent_name}] Auto-clicking primary button: '{btn_target}' (model unresponsive)")
+                                        click_result = self._dispatch("click", {"target": btn_target})
+                                        _real_tool_dispatches += 1
+                                        actions_taken.append(f"Clicked '{btn_target}': {str(click_result)[:1000]}")
+
+                                    if actions_taken:
+                                        action_summary = "\n".join(actions_taken)
+                                        messages.append({"role": "assistant", "content": [{"type": "text", "text": "Taking automated action."}]})
+                                        messages.append({"role": "user", "content": (
+                                            f"🤖 AUTOPILOT took these actions for you:\n{action_summary}\n\n"
+                                            f"Call look() to see the result, or done(summary) if your task is complete."
+                                        )})
+                                        _empty_endturn_streak = 0
+                                        continue
+                                    elif not primary_btns and not empty_fields:
+                                        # No buttons, no fields — page might be showing results
+                                        # Auto-call done with the page content
+                                        logger.warning(f"  🤖 [{self.agent_name}] No actions available — auto-completing with page content")
+                                        # Include the raw page content as the done summary
+                                        page_content = auto_look2_str[:3000]
+                                        return {
+                                            "success": True,
+                                            "content": f"[AUTO-COMPLETED] Page content:\n{page_content}",
+                                            "steps": step,
+                                            "auto_completed": True,
+                                        }
+                                except Exception as e:
+                                    logger.debug(f"  Auto-action failed: {e}")
+
+                            messages.append({"role": "assistant", "content": [{"type": "text", "text": "I need to act now."}]})
+                            messages.append({"role": "user", "content": (
+                                f"⚠️ WARNING: {_empty_endturn_streak} empty responses in a row. "
+                                "You MUST call a tool. If you're done, call done(summary). "
+                                "If you need to click something, call click(target). DO NOT return empty."
+                            )})
+                            continue
+                    else:
+                        _empty_endturn_streak = 0  # Reset on non-empty response
+
                     # ── end_turn streak auto-done ──
                     # Model keeps sending end_turn (no content, no tools) instead of
                     # calling done(). After N consecutive end_turns with real work done,
                     # auto-complete — the agent clearly thinks it's finished.
-                    if _end_turn_streak >= _END_TURN_AUTO_DONE and _real_tool_dispatches >= 8:
+                    if _end_turn_streak >= _END_TURN_AUTO_DONE and _real_tool_dispatches >= 3:
                         auto_summary = txt if txt else f"Task completed ({_real_tool_dispatches} actions taken). Agent signaled completion {_end_turn_streak} times."
                         logger.info(f"  ✅ [{self.agent_name}] Auto-done (end_turn streak ×{_end_turn_streak} after {_real_tool_dispatches} dispatches)")
                         self._notify(f"✅ {self.agent_name} done (auto): {auto_summary[:500]}")
@@ -1017,7 +1278,7 @@ class BaseAgent(ABC):
                             }
 
                     messages.append({"role": "assistant", "content": assistant_content})
-                    if _end_turn_streak >= 2 and _real_tool_dispatches >= 5:
+                    if _end_turn_streak >= 2 and _real_tool_dispatches >= 2:
                         # Model has tried to stop multiple times — strongly nudge done()
                         messages.append({
                             "role": "user",

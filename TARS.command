@@ -13,4 +13,5 @@ echo ""
 echo "  24/7 Service — Auto-restart + Auto-reload"
 echo "  Press Ctrl+C to stop"
 echo ""
+ulimit -n 4096
 exec .venv/bin/python -u tars_runner.py "$@"
